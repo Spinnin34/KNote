@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import {
   Activity, AlignLeft, AlarmClock, Archive, ArrowRight, ArrowUpDown, ArrowUpRight, Atom, Award, Bell, BookMarked, BookOpen, Bot, BriefcaseBusiness, Building2, CalendarDays, Camera, ChartNoAxesCombined, Check, CheckCheck, ChefHat,
   ChevronDown, ChevronRight, CircleAlert, CircleCheck, CircleDashed, CircleDot, CircleHelp, ClipboardList, Cloud, Code2, Coffee, Compass, Cpu, Crown,
-  Database, Diamond, Dumbbell, Earth, Eye, FileCode, FileImage, FileText, Fingerprint, Flag, Flame, FlaskConical, Folder, FolderOpen, Gamepad2, Gauge, Gem, GitBranch, Globe, Hammer, Handshake, HardDrive, Headphones, Heart, History, House, Inbox, KeyRound, Laptop, Layers, Leaf, LifeBuoy, Link2, LockKeyhole, Mail, Map, MapPin, Medal, Mic, Monitor, Moon, Mountain,
+  Database, Diamond, Dumbbell, Earth, Eye, FileCode, FileImage, FileText, Fingerprint, Flag, Flame, FlaskConical, Folder, FolderOpen, Gamepad2, Gauge, Gem, GitBranch, Globe, Hammer, Handshake, HardDrive, Headphones, Heart, History, House, Inbox, KeyRound, Laptop, Layers, Leaf, LifeBuoy, Link2, LockKeyhole, Mail, Map as MapIcon, MapPin, Medal, Mic, Monitor, Moon, Mountain,
   LayoutDashboard, Lightbulb, ListTodo, Link as LinkIcon, Menu, MessageCircle,
-  MoreHorizontal, Music2, Network, Newspaper, NotebookPen, Package, Paintbrush, Palette, Pencil, PenTool, Plane, Plug, Plus, Puzzle, Radio, Rocket, Scale, Scissors, Search, Send, Server, Settings, Settings2, ShieldCheck, ShoppingBag, SlidersHorizontal, Smartphone, Smile, Sparkles, Sprout, Star, StickyNote, Sun, Sword,
-  Share2, Table2, Tag, Target, Terminal, Ticket, Timer, Trash2, Trees, Trophy, UserRound, UsersRound, Video, Wallet, Waves, Workflow, Wrench, Zap, Filter, X,
+  MoreHorizontal, Music2, Network, Newspaper, NotebookPen, Package, Paintbrush, Palette, Paperclip, Pencil, PenTool, Plane, Plug, Plus, Puzzle, Radio, Rocket, Scale, Scissors, Search, Send, Server, Settings, Settings2, ShieldCheck, ShoppingBag, SlidersHorizontal, Smartphone, Smile, Sparkles, Sprout, Star, StickyNote, Sun, Sword,
+  Table2, Tag, Target, Terminal, Ticket, Timer, Trash2, Trees, Trophy, UserRound, UsersRound, Video, Wallet, Waves, Workflow, Wrench, Zap, Filter, X,
 } from '@lucide/vue';
 import Badge from '@/components/ui/Badge.vue';
 import Breadcrumb from '@/components/ui/Breadcrumb.vue';
@@ -29,11 +29,13 @@ import Table from '@/components/ui/Table.vue';
 import Tabs from '@/components/ui/Tabs.vue';
 import ToastViewport, { type ToastItem } from '@/components/ui/ToastViewport.vue';
 import Attachment from '@/components/ui/Attachment.vue';
-import BlockEditor from '@/components/BlockEditor.vue';
 import PageIconPicker from '@/components/PageIconPicker.vue';
 import type { CalendarModelValue } from '@/components/ui/Calendar.vue';
 import type { MenuItem, MenuSelection } from '@/components/ui/menu';
 import type { SidebarGroup } from '@/components/ui/Sidebar.vue';
+import { deleteBlockImage, getBlockImage, listBlockImageIds, saveBlockImage } from '@/lib/block-images';
+
+const BlockEditor = defineAsyncComponent({ loader: () => import('@/components/BlockEditor.vue'), delay: 120, timeout: 15000 });
 
 type PageType = 'folder' | 'doc' | 'board' | 'database' | 'calendar' | 'tasks';
 type BoardStatus = 'Por hacer' | 'En curso' | 'Hecho';
@@ -115,7 +117,7 @@ const pageIconOptions = [
   { id: 'building', label: 'Organización', icon: Building2 },
   { id: 'globe', label: 'Web', icon: Globe },
   { id: 'earth', label: 'Mundo', icon: Earth },
-  { id: 'map', label: 'Mapa', icon: Map },
+  { id: 'map', label: 'Mapa', icon: MapIcon },
   { id: 'location', label: 'Ubicación', icon: MapPin },
   { id: 'mountain', label: 'Montaña', icon: Mountain },
   { id: 'trees', label: 'Bosque', icon: Trees },
@@ -245,9 +247,9 @@ const samplePages: WorkspacePage[] = [
   { id: 'folder-personal', title: 'Personal', type: 'folder', parentId: null, content: '', favorite: false, createdAt: now - 20 * dayMs, updatedAt: now - 20 * dayMs, entries: [] },
   { id: 'page-notes', title: 'La belleza de lo simple', type: 'doc', parentId: 'folder-personal', content: 'Una buena idea no necesita más ruido.\n\n• Quitar lo que estorba también es avanzar.\n• Dejar espacio para que aparezca lo importante.\n• Volver a lo esencial, una y otra vez.\n\nApuntes para pensar con calma.', favorite: true, createdAt: now - 3 * dayMs, updatedAt: now - 14 * 60000, entries: [] },
   { id: 'page-reading', title: 'Lecturas para guardar', type: 'database', parentId: 'folder-personal', content: 'Libros, artículos y frases a los que quiero volver.', favorite: false, createdAt: now - 7 * dayMs, updatedAt: now - dayMs, entries: [
-    { id: 'reading-1', title: 'El diseño de las cosas cotidianas', status: 'En curso', due: 'Libro', tag: 'Diseño' },
-    { id: 'reading-2', title: 'Notas sobre herramientas tranquilas', status: 'Por hacer', due: 'Artículo', tag: 'Ideas' },
-    { id: 'reading-3', title: 'Un sistema para recordar mejor', status: 'Hecho', due: 'Ensayo', tag: 'Escritura' },
+    { id: 'reading-1', title: 'El diseño de las cosas cotidianas', status: 'En curso', tag: 'Diseño', tags: ['Diseño', 'Libro'] },
+    { id: 'reading-2', title: 'Notas sobre herramientas tranquilas', status: 'Por hacer', tag: 'Ideas', tags: ['Ideas', 'Artículo'] },
+    { id: 'reading-3', title: 'Un sistema para recordar mejor', status: 'Hecho', tag: 'Escritura', tags: ['Escritura', 'Ensayo'] },
   ] },
   { id: 'page-tasks', title: 'Objetivos de octubre', type: 'tasks', parentId: 'folder-personal', content: 'Pequeños pasos para un mes con foco.', favorite: false, createdAt: now - 2 * dayMs, updatedAt: now - 2 * dayMs, entries: [
     { id: 'goal-1', title: 'Terminar la primera versión de KNote', status: 'En curso', done: false, tag: 'KNote' },
@@ -309,26 +311,45 @@ function readPages(): WorkspacePage[] {
   if (!Array.isArray(stored)) return samplePages.map(cloneSamplePage);
   const normalized = stored.filter((page) => page && typeof page.title === 'string').map((page) => {
     const type: PageType = ['folder', 'doc', 'board', 'database', 'calendar', 'tasks'].includes(page.type) ? page.type : 'doc';
+    const entries = Array.isArray(page.entries) ? page.entries.map(normalizeEntry).filter((entry): entry is PageEntry => Boolean(entry)) : [];
+    if (page.id === 'page-reading') {
+      const legacyFormats: Record<string, string> = { 'reading-1': 'Libro', 'reading-2': 'Artículo', 'reading-3': 'Ensayo' };
+      entries.forEach((entry) => {
+        const format = legacyFormats[entry.id];
+        if (format && entry.due === format) {
+          entry.tags = [...new Set([...entryTags(entry), format])];
+          entry.tag = entry.tags[0];
+          entry.due = undefined;
+        }
+      });
+    }
     return {
       ...page, id: typeof page.id === 'string' ? page.id : makeId(), title: page.title, type,
       parentId: typeof page.parentId === 'string' ? page.parentId : null,
       content: typeof page.content === 'string' ? page.content : '', favorite: Boolean(page.favorite),
       icon: pageIconOptions.some((option) => option.id === page.icon) ? page.icon : undefined,
       iconColor: typeof page.iconColor === 'string' && /^#[\da-f]{6}$/i.test(page.iconColor) ? page.iconColor.toLowerCase() : undefined,
-      banner: typeof page.banner === 'string' && /^data:image\/(?:webp|jpeg|png);base64,[\da-z+/=]+$/i.test(page.banner) && page.banner.length <= 1300000 ? page.banner : undefined,
+      banner: typeof page.banner === 'string' && (
+        /^data:image\/(?:webp|jpeg|png);base64,[\da-z+/=]+$/i.test(page.banner) && page.banner.length <= 1300000
+        || /^knote-asset:[\da-f-]{20,}$/i.test(page.banner)
+      ) ? page.banner : undefined,
       createdAt: Number(page.createdAt) || now, updatedAt: Number(page.updatedAt) || now,
-      entries: Array.isArray(page.entries) ? page.entries.map(normalizeEntry).filter((entry): entry is PageEntry => Boolean(entry)) : [],
+      entries,
     } as WorkspacePage;
   });
-  const existingIds = new Set(normalized.map((page) => page.id));
-  const newSamples = samplePages.filter((page) => !existingIds.has(page.id)).map(cloneSamplePage);
-  return [...normalized, ...newSamples];
+  // Existing storage is authoritative: merging seed pages here resurrected pages
+  // users had deleted every time the app loaded.
+  return normalized;
 }
 function readTodayTasks(): TodayTask[] {
   try {
     const raw = localStorage.getItem(TASK_STORAGE_KEY);
     const parsed: unknown = raw ? JSON.parse(raw) : null;
-    if (Array.isArray(parsed)) return parsed as TodayTask[];
+    if (Array.isArray(parsed)) return parsed
+      .filter((task): task is TodayTask => Boolean(task && typeof task === 'object'
+        && typeof task.id === 'string' && typeof task.title === 'string' && typeof task.group === 'string'))
+      .slice(0, 500)
+      .map((task) => ({ ...task, done: Boolean(task.done) }));
   } catch { /* Fall back to the local sample list. */ }
   return sampleTodayTasks.map((task) => ({ ...task }));
 }
@@ -367,6 +388,9 @@ const todayTasks = ref<TodayTask[]>(readTodayTasks());
 const preferences = ref<WorkspacePreferences>(readPreferences());
 const databaseViewStates = ref<Record<string, DatabaseViewState>>(readDatabaseViewStates());
 const bannerFiles = ref<readonly File[]>([]);
+const bannerObjectUrls = ref<Record<string, string>>({});
+const saveState = ref<'saved' | 'saving' | 'error'>('saved');
+const currentTime = ref(Date.now());
 function pageIdFromHash(): string {
   let requestedId = '';
   try { requestedId = decodeURIComponent(window.location.hash.slice(1)); }
@@ -411,6 +435,9 @@ const commandQuery = ref('');
 const selectedDate = ref<CalendarModelValue>(new Date());
 const toasts = ref<readonly ToastItem[]>([]);
 let saveTimer: number | undefined;
+let databaseViewSaveTimer: number | undefined;
+let clockTimer: number | undefined;
+let assetPruneTimer: number | undefined;
 let toastCounter = 0;
 let sidebarCloseTimer: number | undefined;
 
@@ -485,10 +512,10 @@ const pageCount = computed(() => pages.value.filter((page) => page.type !== 'fol
 const favoriteCount = computed(() => pages.value.filter((page) => page.favorite).length);
 const todayDoneCount = computed(() => todayTasks.value.filter((task) => task.done).length);
 const greeting = computed(() => {
-  const hour = new Date().getHours();
+  const hour = new Date(currentTime.value).getHours();
   return hour < 12 ? 'Buenos días' : hour < 20 ? 'Buenas tardes' : 'Buenas noches';
 });
-const dateLabel = computed(() => new Intl.DateTimeFormat('es-ES', { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date()));
+const dateLabel = computed(() => new Intl.DateTimeFormat('es-ES', { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date(currentTime.value)));
 const selectedDateLabel = computed(() => selectedDate.value instanceof Date
   ? new Intl.DateTimeFormat('es-ES', { weekday: 'long', day: 'numeric', month: 'long' }).format(selectedDate.value)
   : 'Próximas fechas');
@@ -513,8 +540,8 @@ const boardViewTabs = [
   { id: 'table', label: 'Tabla', icon: Table2 },
 ];
 const databaseViewTabs = [
-  { id: 'table', label: 'Tabla', icon: Table2 },
   { id: 'board', label: 'Tablero', icon: LayoutDashboard },
+  { id: 'table', label: 'Tabla', icon: Table2 },
 ];
 const databaseStatusOptions = [
   { label: 'Todos', value: 'Todas' },
@@ -566,10 +593,13 @@ function entryIconStyle(entry: PageEntry): Record<string, string> {
   return { color: entry.iconColor || 'var(--balsa-role-accent)' };
 }
 function pageBannerStyle(page: WorkspacePage): Record<string, string> {
-  return page.banner ? { backgroundImage: `url("${page.banner}")` } : {};
+  if (!page.banner) return {};
+  const assetId = page.banner.startsWith('knote-asset:') ? page.banner.slice('knote-asset:'.length) : '';
+  const source = assetId ? bannerObjectUrls.value[assetId] : page.banner;
+  return source ? { backgroundImage: `url("${source}")` } : {};
 }
 function formatRelative(timestamp: number): string {
-  const minutes = Math.floor(Math.max(0, Date.now() - (timestamp || Date.now())) / 60000);
+  const minutes = Math.floor(Math.max(0, currentTime.value - (timestamp || currentTime.value)) / 60000);
   if (minutes < 1) return 'Ahora mismo';
   if (minutes < 60) return 'Hace ' + minutes + ' min';
   const hours = Math.floor(minutes / 60);
@@ -623,9 +653,15 @@ const breadcrumbItems = computed(() => {
 });
 const pageMenuItems = computed<readonly MenuItem[]>(() => [
   { id: 'favorite', type: 'checkbox', label: activePage.value?.favorite ? 'Quitar de favoritos' : 'Añadir a favoritos', icon: Star, checked: Boolean(activePage.value?.favorite), disabled: !activePage.value },
-  { id: 'copy-link', label: 'Copiar enlace local', icon: Link2, disabled: !activePage.value },
+  { id: 'copy-link', label: 'Copiar enlace de esta instalación', icon: Link2, disabled: !activePage.value },
   { id: 'menu-separator', type: 'separator' },
   { id: 'delete', label: 'Eliminar página', icon: Trash2, destructive: true, disabled: !activePage.value },
+]);
+const detailEntryMenuItems = computed<readonly MenuItem[]>(() => [
+  ...(saveState.value === 'error' ? [{ id: 'retry-save', label: 'Reintentar guardado', icon: CircleAlert }] : []),
+  { id: 'duplicate-entry', label: 'Duplicar tarea', icon: FileText },
+  { id: 'detail-entry-menu-separator', type: 'separator' },
+  { id: 'delete-entry', label: 'Eliminar tarea', icon: Trash2, destructive: true },
 ]);
 const commandGroups = computed(() => [
   { id: 'pages', label: 'Páginas', items: recentPages.value.map((page) => ({
@@ -645,16 +681,98 @@ function notify(title: string, description: string, color: ToastItem['color'] = 
   toasts.value = [...toasts.value, { id: 'toast-' + toastCounter, title, description, color, variant: 'surface', duration: 3200, dismissible: true }];
 }
 function persist(): void {
+  if (saveTimer !== undefined) window.clearTimeout(saveTimer);
+  saveTimer = undefined;
+  const previousState = saveState.value;
+  saveState.value = 'saving';
   try {
     localStorage.setItem(PAGE_STORAGE_KEY, JSON.stringify(pages.value));
     localStorage.setItem(TASK_STORAGE_KEY, JSON.stringify(todayTasks.value));
+    saveState.value = 'saved';
+    if (assetPruneTimer !== undefined) window.clearTimeout(assetPruneTimer);
+    assetPruneTimer = window.setTimeout(() => { void pruneUnusedBlockImages(); }, 250);
   } catch {
-    notify('No se pudo guardar', 'Revisa el espacio de almacenamiento disponible.', 'destructive');
+    saveState.value = 'error';
+    if (previousState !== 'error') notify('No se pudo guardar', 'El almacenamiento local está lleno o no disponible. Libera espacio y vuelve a intentarlo.', 'destructive');
   }
 }
 function queueSave(): void {
   if (saveTimer !== undefined) window.clearTimeout(saveTimer);
+  saveState.value = 'saving';
   saveTimer = window.setTimeout(persist, 320);
+}
+function queueDatabaseViewSave(): void {
+  if (databaseViewSaveTimer !== undefined) window.clearTimeout(databaseViewSaveTimer);
+  databaseViewSaveTimer = window.setTimeout(() => {
+    databaseViewSaveTimer = undefined;
+    try { localStorage.setItem(DATABASE_VIEWS_STORAGE_KEY, JSON.stringify(databaseViewStates.value)); }
+    catch { notify('No se guardaron las vistas', 'El navegador no permitió guardar las preferencias de esta tabla.', 'warning'); }
+  }, 180);
+}
+function flushPendingChanges(): void {
+  if (saveTimer !== undefined) {
+    window.clearTimeout(saveTimer);
+    saveTimer = undefined;
+    persist();
+  }
+  if (databaseViewSaveTimer !== undefined) {
+    window.clearTimeout(databaseViewSaveTimer);
+    databaseViewSaveTimer = undefined;
+    try { localStorage.setItem(DATABASE_VIEWS_STORAGE_KEY, JSON.stringify(databaseViewStates.value)); }
+    catch { /* Keep the rest of the workspace available if view preferences cannot be stored. */ }
+  }
+}
+async function pruneUnusedBlockImages(): Promise<void> {
+  try {
+    const referenced = new Set<string>();
+    const collect = (value: string | undefined) => {
+      if (!value) return;
+      for (const match of value.matchAll(/knote-asset:([\da-f-]{20,})/gi)) referenced.add(match[1]);
+    };
+    pages.value.forEach((page) => {
+      collect(page.banner);
+      collect(page.content);
+      page.entries.forEach((entry) => collect(entry.content));
+    });
+    const stored = await listBlockImageIds();
+    await Promise.all(stored.filter((id) => !referenced.has(id)).map(deleteBlockImage));
+  } catch { /* Keep existing images if the browser cannot inspect IndexedDB. */ }
+}
+async function hydratePageBanners(): Promise<void> {
+  const references = new Map(pages.value.flatMap((page) => page.banner?.startsWith('knote-asset:')
+    ? [[page.id, { banner: page.banner, assetId: page.banner.slice('knote-asset:'.length) }] as const]
+    : []));
+  for (const [pageId, reference] of references) {
+    if (bannerObjectUrls.value[reference.assetId]) continue;
+    try {
+      const blob = await getBlockImage(reference.assetId);
+      const current = pages.value.find((page) => page.id === pageId);
+      if (!blob || current?.banner !== reference.banner) continue;
+      bannerObjectUrls.value = { ...bannerObjectUrls.value, [reference.assetId]: URL.createObjectURL(blob) };
+    } catch { /* A missing local asset does not make the page unusable. */ }
+  }
+  const activeIds = new Set([...references.values()].map((reference) => reference.assetId));
+  for (const [assetId, objectUrl] of Object.entries(bannerObjectUrls.value)) {
+    if (!activeIds.has(assetId)) {
+      URL.revokeObjectURL(objectUrl);
+      const next = { ...bannerObjectUrls.value };
+      delete next[assetId];
+      bannerObjectUrls.value = next;
+    }
+  }
+}
+async function migrateLegacyBanners(): Promise<void> {
+  for (const page of pages.value) {
+    if (!page.banner?.startsWith('data:image/')) continue;
+    try {
+      const blob = await fetch(page.banner).then((response) => response.blob());
+      const id = await saveBlockImage(blob);
+      if (page.banner.startsWith('data:image/')) {
+        page.banner = `knote-asset:${id}`;
+        touchPage(page);
+      }
+    } catch { /* Keep legacy banner data if migration storage is unavailable. */ }
+  }
 }
 function touchPage(page: WorkspacePage): void {
   page.updatedAt = Date.now();
@@ -698,10 +816,7 @@ function scheduleSidebarClose(keepWhenFocused = false): void {
   }, 180);
 }
 function handleSidebarPointerLeave(): void {
-  if (document.getElementById('knote-navigation')?.contains(document.activeElement)) {
-    (document.activeElement as HTMLElement).blur();
-  }
-  scheduleSidebarClose();
+  scheduleSidebarClose(true);
 }
 function handleSidebarFocusOut(): void { scheduleSidebarClose(true); }
 function onSidebarSelect(item: { id: string }): void {
@@ -765,14 +880,8 @@ function saveEntry(close?: () => void): void {
   notify(existing ? 'Elemento actualizado' : 'Elemento añadido', title);
 }
 function defaultEntries(type: PageType): PageEntry[] {
-  if (type === 'board' || type === 'database') return [
-    { id: makeId(), title: 'Primera tarea', status: 'Por hacer', tag: 'Nueva', tags: ['Nueva'], priority: 'Media', content: '' },
-    { id: makeId(), title: 'Siguiente paso', status: 'En curso', tag: 'En progreso', tags: ['En progreso'], priority: 'Alta', content: '' },
-  ];
-  if (type === 'tasks') return [
-    { id: makeId(), title: 'Primer paso', status: 'Por hacer', done: false },
-    { id: makeId(), title: 'Anotar una idea', status: 'Por hacer', done: false },
-  ];
+  // New databases and boards start empty. Seed content is only for the demo workspace.
+  void type;
   return [];
 }
 function submitNewPage(close?: () => void): void {
@@ -835,13 +944,18 @@ async function copyCurrentLink(): Promise<void> {
   if (!activePage.value) return;
   try {
     await navigator.clipboard.writeText(window.location.origin + window.location.pathname + window.location.search + '#' + encodeURIComponent(activePage.value.id));
-    notify('Enlace copiado', 'El enlace local ya está en el portapapeles.');
+    notify('Enlace copiado', 'Abre esta página en esta instalación. Los datos siguen guardados en este dispositivo.');
   } catch { notify('No se pudo copiar', 'El navegador no ha dado acceso al portapapeles.', 'warning'); }
 }
 function onPageMenu(selection: MenuSelection): void {
   if (selection.id === 'favorite' && activePage.value) toggleFavorite(activePage.value);
   if (selection.id === 'copy-link') void copyCurrentLink();
   if (selection.id === 'delete') deleteCurrentPage();
+}
+function onDetailEntryMenu(selection: MenuSelection): void {
+  if (selection.id === 'retry-save') persist();
+  if (selection.id === 'duplicate-entry') duplicateDetailEntry();
+  if (selection.id === 'delete-entry') deleteEntryModalOpen.value = true;
 }
 function setPageIcon(iconId: string | undefined): void {
   if (!activePage.value) return;
@@ -866,7 +980,7 @@ function setDetailEntryIconColor(color: string): void {
   detailEntry.value.iconColor = color ? color.toLowerCase() : undefined;
   touchDetailEntry();
 }
-async function optimizeBanner(file: File): Promise<string> {
+async function optimizeBanner(file: File): Promise<Blob> {
   if (!file.type.startsWith('image/')) throw new Error('Elige una imagen para la portada.');
   const bitmap = await createImageBitmap(file);
   const scale = Math.min(1, 2400 / bitmap.width, 1400 / bitmap.height);
@@ -884,12 +998,7 @@ async function optimizeBanner(file: File): Promise<string> {
   if (blob.size > 930000) blob = await toBlob(.86);
   if (blob.size > 930000) blob = await toBlob(.82);
   if (blob.size > 930000) throw new Error('La portada es demasiado grande. Prueba con una imagen más pequeña.');
-  return await new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('No se pudo leer la imagen.'));
-    reader.onerror = () => reject(new Error('No se pudo leer la imagen.'));
-    reader.readAsDataURL(blob);
-  });
+  return blob;
 }
 async function setPageBanner(files: readonly File[]): Promise<void> {
   const file = files[0];
@@ -897,15 +1006,28 @@ async function setPageBanner(files: readonly File[]): Promise<void> {
   bannerFiles.value = files;
   if (!file || !pageId) return;
   try {
-    const dataUrl = await optimizeBanner(file);
+    const image = await optimizeBanner(file);
+    const assetId = await saveBlockImage(image);
     const page = pages.value.find((item) => item.id === pageId);
-    if (!page) return;
-    page.banner = dataUrl;
+    if (!page) { await deleteBlockImage(assetId); return; }
+    const previousAssetId = page.banner?.startsWith('knote-asset:') ? page.banner.slice('knote-asset:'.length) : null;
+    page.banner = `knote-asset:${assetId}`;
+    bannerObjectUrls.value = { ...bannerObjectUrls.value, [assetId]: URL.createObjectURL(image) };
+    if (previousAssetId && bannerObjectUrls.value[previousAssetId]) {
+      URL.revokeObjectURL(bannerObjectUrls.value[previousAssetId]);
+      const next = { ...bannerObjectUrls.value };
+      delete next[previousAssetId];
+      bannerObjectUrls.value = next;
+    }
     touchPage(page);
-    notify('Portada actualizada', 'La imagen quedó optimizada y guardada en este dispositivo.');
+    notify('Portada actualizada', 'La imagen quedó optimizada y guardada fuera de los datos del documento.');
   } catch (error) {
     notify('No se pudo usar la portada', error instanceof Error ? error.message : 'Elige otra imagen.', 'warning');
   } finally { bannerFiles.value = []; }
+}
+function openPageBannerPicker(pageId: string): void {
+  const input = document.getElementById(`banner-${pageId}`);
+  if (input instanceof HTMLInputElement) input.click();
 }
 function removePageBanner(): void {
   if (!activePage.value) return;
@@ -1046,6 +1168,8 @@ function entryTagsLabel(entry: PageEntry): string {
   return entryTags(entry).join(', ') || '—';
 }
 function openEntryDetails(page: WorkspacePage, entry: PageEntry): void {
+  tableSubtaskComposerId.value = null;
+  tableSubtaskDraft.value = '';
   detailPageId.value = page.id;
   detailEntryId.value = entry.id;
   detailTagsDraft.value = entryTags(entry).join(', ');
@@ -1089,12 +1213,16 @@ function updateDetailDue(value: string): void {
   detailEntry.value.due = value.trim() || undefined;
   touchDetailEntry();
 }
-function entryDateInputValue(entry: PageEntry): string {
-  if (!entry.due) return '';
-  if (/^\d{4}-\d{2}-\d{2}$/.test(entry.due)) return entry.due;
-  const date = entryCalendarDate(entry);
-  if (!date) return '';
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+function detailDateValue(entry: PageEntry): CalendarModelValue {
+  return entryCalendarDate(entry);
+}
+function detailDueIsDate(entry: PageEntry): boolean {
+  return !entry.due || Boolean(entryCalendarDate(entry));
+}
+function updateDetailDueFromPicker(value: CalendarModelValue): void {
+  if (!detailEntry.value) return;
+  if (!(value instanceof Date)) { updateDetailDue(''); return; }
+  updateDetailDue(`${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`);
 }
 function updateEntryDue(page: WorkspacePage, entry: PageEntry, value: string | number): void {
   entry.due = String(value).trim() || undefined;
@@ -1234,6 +1362,10 @@ function dropBoardEntry(status: BoardStatus, event: DragEvent, target?: PageEntr
   const entryId = draggedEntryId.value || event.dataTransfer?.getData('text/plain');
   if (!page || !entryId) return;
   if (target?.id === entryId) { handleBoardDragEnd(); return; }
+  if (getDatabaseViewState(page.id)?.sort !== 'manual') {
+    updateDatabaseViewState('sort', 'manual');
+    notify('Orden manual activado', 'La vista se ha cambiado a orden manual para conservar el movimiento.');
+  }
   const fromIndex = page.entries.findIndex((entry) => entry.id === entryId);
   if (fromIndex < 0) return;
   const [moving] = page.entries.splice(fromIndex, 1);
@@ -1267,7 +1399,11 @@ function entryDateLabel(entry: PageEntry): string {
 }
 function entryCalendarDate(entry: PageEntry): Date | null {
   if (!entry.due) return null;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(entry.due)) return new Date(entry.due + 'T12:00:00');
+  if (/^\d{4}-\d{2}-\d{2}$/.test(entry.due)) {
+    const [year, month, day] = entry.due.split('-').map(Number);
+    const date = new Date(year, month - 1, day, 12);
+    return date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day ? null : date;
+  }
   const base = new Date();
   if (entry.due.toLocaleLowerCase('es') === 'hoy') return new Date(base.getFullYear(), base.getMonth(), base.getDate(), 12);
   if (entry.due.toLocaleLowerCase('es') === 'mañana') return new Date(base.getFullYear(), base.getMonth(), base.getDate() + 1, 12);
@@ -1276,7 +1412,10 @@ function entryCalendarDate(entry: PageEntry): Date | null {
   if (!match) return null;
   const months: Record<string, number> = { ene: 0, enero: 0, feb: 1, febrero: 1, mar: 2, marzo: 2, abr: 3, abril: 3, may: 4, mayo: 4, jun: 5, junio: 5, jul: 6, julio: 6, ago: 7, agosto: 7, sep: 8, sept: 8, septiembre: 8, oct: 9, octubre: 9, nov: 10, noviembre: 10, dic: 11, diciembre: 11 };
   const month = months[match[2].toLocaleLowerCase('es').replace('.', '')];
-  return month === undefined ? null : new Date(base.getFullYear(), month, Number(match[1]), 12);
+  if (month === undefined) return null;
+  const day = Number(match[1]);
+  const date = new Date(base.getFullYear(), month, day, 12);
+  return date.getMonth() === month && date.getDate() === day ? date : null;
 }
 function entriesForSelectedDate(page: WorkspacePage): PageEntry[] {
   const selected = selectedDate.value;
@@ -1307,19 +1446,28 @@ watch(preferences, (value) => {
   catch { notify('No se guardaron los ajustes', 'El navegador no permitió guardar las preferencias.', 'warning'); }
 }, { deep: true });
 watch(databaseViewStates, (value) => {
-  try { localStorage.setItem(DATABASE_VIEWS_STORAGE_KEY, JSON.stringify(value)); }
-  catch { notify('No se guardaron las vistas', 'El navegador no permitió guardar las preferencias de esta tabla.', 'warning'); }
+  void value;
+  queueDatabaseViewSave();
 }, { deep: true });
+watch(() => pages.value.map((page) => `${page.id}:${page.banner || ''}`).join('|'), () => { void hydratePageBanners(); });
 onMounted(() => {
   window.addEventListener('keydown', onGlobalKeydown);
   window.addEventListener('popstate', syncPageFromHistory);
+  window.addEventListener('pagehide', flushPendingChanges);
+  clockTimer = window.setInterval(() => { currentTime.value = Date.now(); }, 60_000);
   persist();
+  void migrateLegacyBanners().then(hydratePageBanners);
+  void hydratePageBanners();
 });
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onGlobalKeydown);
   window.removeEventListener('popstate', syncPageFromHistory);
-  if (saveTimer !== undefined) window.clearTimeout(saveTimer);
+  window.removeEventListener('pagehide', flushPendingChanges);
+  flushPendingChanges();
+  if (clockTimer !== undefined) window.clearInterval(clockTimer);
+  if (assetPruneTimer !== undefined) window.clearTimeout(assetPruneTimer);
   if (sidebarCloseTimer !== undefined) window.clearTimeout(sidebarCloseTimer);
+  Object.values(bannerObjectUrls.value).forEach((url) => URL.revokeObjectURL(url));
 });
 </script>
 
@@ -1383,7 +1531,7 @@ onBeforeUnmount(() => {
           <Breadcrumb :items="breadcrumbItems" separator="slash" size="sm" aria-label="Ubicación actual" @navigate="goBreadcrumb" />
         </div>
         <div class="knote-topbar-actions">
-          <Button v-if="activePage" variant="soft" color="neutral" size="sm" :prefix-icon="Share2" @click="copyCurrentLink">Compartir</Button>
+          <Button v-if="activePage" variant="soft" color="neutral" size="sm" :prefix-icon="Link2" aria-label="Copiar enlace local" title="Copia un enlace local. Los datos no se sincronizan entre dispositivos." class="knote-topbar-copy-link" @click="copyCurrentLink">Copiar enlace local</Button>
           <Button v-if="activePage" variant="soft" color="neutral" size="sm" :prefix-icon="Star" :aria-label="activePage.favorite ? 'Quitar de favoritos' : 'Añadir a favoritos'" :title="activePage.favorite ? 'Quitar de favoritos' : 'Añadir a favoritos'" :class="{ 'knote-is-favorite': activePage.favorite }" @click="toggleFavorite(activePage)" />
           <DropdownMenu v-if="activePage" id="page-actions" label="Más acciones de página" align="end" variant="surface" :items="pageMenuItems" @select="onPageMenu">
             <template #trigger><Icon :icon="MoreHorizontal" size="sm" /></template>
@@ -1471,7 +1619,8 @@ onBeforeUnmount(() => {
         <template v-else-if="activePage.type === 'folder'">
           <div v-if="activePage.banner" class="knote-page-banner" :style="pageBannerStyle(activePage)">
             <div class="knote-page-banner-actions">
-              <Attachment :id="'banner-' + activePage.id" v-model="bannerFiles" label="Cambiar portada" accept="image/*" :max-size="10485760" size="sm" rounded="lg" hint="Se reduce para guardarse localmente." @update:model-value="setPageBanner" />
+              <Attachment :id="'banner-' + activePage.id" v-model="bannerFiles" class="knote-banner-file-picker" label="Cambiar portada" accept="image/*" :max-size="10485760" size="sm" rounded="lg" hint="Se reduce para guardarse localmente." @update:model-value="setPageBanner" />
+              <Button variant="glass" color="neutral" size="sm" :prefix-icon="Paperclip" class="knote-banner-change" @click="openPageBannerPicker(activePage.id)">Cambiar portada</Button>
               <Button variant="glass" color="neutral" size="sm" :prefix-icon="Trash2" class="knote-banner-remove" @click="removePageBanner">Quitar portada</Button>
             </div>
           </div>
@@ -1504,7 +1653,8 @@ onBeforeUnmount(() => {
         <template v-else>
           <div v-if="activePage.banner" class="knote-page-banner" :style="pageBannerStyle(activePage)">
             <div class="knote-page-banner-actions">
-              <Attachment :id="'banner-' + activePage.id" v-model="bannerFiles" label="Cambiar portada" accept="image/*" :max-size="10485760" size="sm" rounded="lg" hint="Se reduce para guardarse localmente." @update:model-value="setPageBanner" />
+              <Attachment :id="'banner-' + activePage.id" v-model="bannerFiles" class="knote-banner-file-picker" label="Cambiar portada" accept="image/*" :max-size="10485760" size="sm" rounded="lg" hint="Se reduce para guardarse localmente." @update:model-value="setPageBanner" />
+              <Button variant="glass" color="neutral" size="sm" :prefix-icon="Paperclip" class="knote-banner-change" @click="openPageBannerPicker(activePage.id)">Cambiar portada</Button>
               <Button variant="glass" color="neutral" size="sm" :prefix-icon="Trash2" class="knote-banner-remove" @click="removePageBanner">Quitar portada</Button>
             </div>
           </div>
@@ -1547,7 +1697,7 @@ onBeforeUnmount(() => {
                 <section class="knote-calendar-agenda">
                   <div class="knote-agenda-heading"><div><span class="knote-overline">AGENDA</span><h2>{{ selectedDateLabel }}</h2></div><Button variant="glass" color="neutral" size="sm" :prefix-icon="Plus" @click="openEntryModal()">Añadir evento</Button></div>
                   <ul class="knote-agenda-list">
-                    <li v-for="entry in entriesForSelectedDate(activePage)" :key="entry.id" tabindex="0" role="button" :aria-label="'Abrir ' + entry.title" @click="openEntryDetails(activePage, entry)" @keydown.enter.prevent="openEntryDetails(activePage, entry)"><span class="knote-agenda-dot" /><div><strong>{{ entry.title }}</strong><small>{{ entryDateLabel(entry) }}<span v-if="entryTags(entry).length"> · {{ entryTagsLabel(entry) }}</span></small></div></li>
+                    <li v-for="entry in entriesForSelectedDate(activePage)" :key="entry.id" tabindex="0" role="button" :aria-label="'Abrir ' + entry.title" @click="openEntryDetails(activePage, entry)" @keydown.enter.prevent="openEntryDetails(activePage, entry)" @keydown.space.prevent="openEntryDetails(activePage, entry)"><span class="knote-agenda-dot" /><div><strong>{{ entry.title }}</strong><small>{{ entryDateLabel(entry) }}<span v-if="entryTags(entry).length"> · {{ entryTagsLabel(entry) }}</span></small></div></li>
                     <li v-if="!entriesForSelectedDate(activePage).length" class="knote-empty-row">No hay elementos para esta fecha.</li>
                   </ul>
                 </section>
@@ -1556,7 +1706,7 @@ onBeforeUnmount(() => {
 
             <template v-else-if="activePage.type === 'board' || activePage.type === 'database'">
               <div class="knote-database-shell">
-              <Tabs id="page-view-tabs" v-model="activeView" :items="activePage.type === 'database' ? databaseViewTabs : boardViewTabs" label="Vistas de la página" type="segmented" variant="glass" rounded="full" size="sm" :panel-surface="false" class="knote-view-tabs">
+              <Tabs id="page-view-tabs" v-model="activeView" :items="activePage.type === 'database' ? databaseViewTabs : boardViewTabs" label="Vistas de la página" type="segmented" variant="surface" rounded="full" size="sm" :panel-surface="false" class="knote-view-tabs">
               <template #board>
                 <div class="knote-board" aria-label="Tablero por estado">
                   <section v-for="status in visibleBoardStatuses" :key="status" class="knote-board-column" :data-status="status" @dragover.prevent @drop.prevent="dropBoardEntry(status, $event)">
@@ -1659,7 +1809,7 @@ onBeforeUnmount(() => {
                         <td v-if="visibleDatabaseProperties.includes('tags')">—</td>
                       </tr>
                       <tr v-if="!collapsedTableEntries.includes(entry.id) && (entrySubtasks(entry).length || tableSubtaskComposerId === entry.id)" :key="entry.id + '-add-subtask'" class="knote-table-add-subtask-row">
-                        <td :colspan="1 + visibleDatabaseProperties.length"><span class="knote-table-add-subtask"><Icon :icon="Plus" size="xs" /><Input v-if="tableSubtaskComposerId === entry.id" :id="'table-new-subtask-' + entry.id" v-model="tableSubtaskDraft" :label="'Nueva subtarea de ' + entry.title" placeholder="Nueva subtarea · Intro para añadir" size="sm" variant="surface" class="knote-table-new-subtask-input" @keydown.enter.stop.prevent="addTableSubtask(activePage, entry)" @keydown.escape.stop.prevent="tableSubtaskComposerId = null" /><Button v-else variant="soft" color="neutral" size="sm" @click="openTableSubtaskComposer(entry.id)">Nueva subtarea</Button></span></td>
+                        <td :colspan="1 + visibleDatabaseProperties.length"><span class="knote-table-add-subtask"><template v-if="tableSubtaskComposerId === entry.id"><Input :id="'table-new-subtask-' + entry.id" v-model="tableSubtaskDraft" :label="'Nueva subtarea de ' + entry.title" placeholder="Nombre de la subtarea" size="sm" variant="surface" class="knote-table-new-subtask-input" @keydown.enter.stop.prevent="addTableSubtask(activePage, entry)" @keydown.escape.stop.prevent="tableSubtaskComposerId = null" /><Button variant="soft" color="neutral" size="sm" :disabled="!tableSubtaskDraft.trim()" @click="addTableSubtask(activePage, entry)">Añadir</Button></template><Button v-else variant="soft" color="neutral" size="sm" :prefix-icon="Plus" @click="openTableSubtaskComposer(entry.id)">Nueva subtarea</Button></span></td>
                       </tr>
                     </template>
                     <tr class="knote-table-new-entry-row"><td :colspan="1 + visibleDatabaseProperties.length"><span class="knote-table-new-entry"><Icon :icon="Plus" size="sm" /><Input id="table-new-entry" v-model="newTableEntryTitle" label="Nueva tarea" placeholder="Nueva tarea · Intro para crear" size="sm" variant="surface" class="knote-table-new-entry-input" @keydown.enter.stop.prevent="addTableEntry(activePage)" @keydown.escape.stop.prevent="newTableEntryTitle = ''" /></span></td></tr>
@@ -1672,10 +1822,10 @@ onBeforeUnmount(() => {
                 <span class="knote-database-count">{{ databaseEntryCount }} elementos</span>
                 <div class="knote-database-tools">
                   <label class="knote-database-search"><Icon :icon="Search" size="sm" /><input v-model="databaseQuery" type="search" placeholder="Buscar" aria-label="Buscar elementos" /></label>
-                  <Select id="database-status-filter" v-model="databaseStatusFilter" label="Filtrar por estado" :options="databaseStatusOptions" size="sm" variant="surface" class="knote-database-filter"><template #selected="{ text }"><span class="knote-database-select-value"><Icon :icon="Filter" size="sm" />{{ text }}</span></template></Select>
-                  <DropdownMenu id="database-sort" label="Ordenar elementos" :items="databaseSortItems" side="bottom" align="end" variant="surface" rounded="lg" class="knote-database-menu" @select="handleDatabaseSort"><template #trigger><Icon :icon="ArrowUpDown" size="sm" /><span>Ordenar</span></template></DropdownMenu>
-                  <DropdownMenu id="database-properties" label="Mostrar propiedades" :items="databasePropertyItems" side="bottom" align="end" variant="surface" rounded="lg" class="knote-database-menu" @select="handleDatabaseProperty"><template #trigger><Icon :icon="SlidersHorizontal" size="sm" /><span>Propiedades</span></template></DropdownMenu>
-                  <Button variant="glass" color="neutral" size="sm" :prefix-icon="Plus" @click="activeView === 'table' ? focusNewTableEntry() : openEntryModal()">Nuevo</Button>
+                  <Select id="database-status-filter" v-model="databaseStatusFilter" label="Filtrar por estado" :options="databaseStatusOptions" size="sm" variant="soft" rounded="xl" class="knote-database-filter"><template #selected="{ text }"><span class="knote-database-select-value"><Icon :icon="Filter" size="sm" />{{ text }}</span></template></Select>
+                  <DropdownMenu id="database-sort" label="Ordenar elementos" :items="databaseSortItems" side="bottom" align="end" variant="surface" rounded="lg" class="knote-database-menu knote-database-action" @select="handleDatabaseSort"><template #trigger><Icon :icon="ArrowUpDown" size="sm" /><span>Ordenar</span></template></DropdownMenu>
+                  <DropdownMenu id="database-properties" label="Mostrar propiedades" :items="databasePropertyItems" side="bottom" align="end" variant="surface" rounded="lg" class="knote-database-menu knote-database-action" @select="handleDatabaseProperty"><template #trigger><Icon :icon="SlidersHorizontal" size="sm" /><span>Propiedades</span></template></DropdownMenu>
+                  <Button variant="soft" color="neutral" size="sm" :prefix-icon="Plus" class="knote-database-action" @click="activeView === 'table' ? focusNewTableEntry() : openEntryModal()">Nuevo</Button>
                 </div>
               </div>
               </div>
@@ -1688,7 +1838,12 @@ onBeforeUnmount(() => {
         <Card variant="surface" padding="none" class="knote-entry-inspector-card" role="region" aria-labelledby="entry-inspector-heading">
           <header class="knote-entry-inspector-header">
             <div><span class="knote-overline">DETALLE DE TAREA</span><small>{{ detailPage.title }}</small></div>
-            <Button variant="soft" color="neutral" size="sm" shape="fab" :prefix-icon="X" aria-label="Cerrar panel de tarea" title="Cerrar panel" @click="entryInspectorOpen = false" />
+            <div class="knote-entry-inspector-header-actions">
+              <DropdownMenu id="entry-detail-actions" label="Acciones de la tarea" side="bottom" align="end" variant="surface" color="neutral" rounded="lg" class="knote-task-detail-menu" :items="detailEntryMenuItems" @select="onDetailEntryMenu">
+                <template #trigger><Icon :icon="MoreHorizontal" size="sm" /><span class="sr-only">Acciones de la tarea</span></template>
+              </DropdownMenu>
+              <Button variant="soft" color="neutral" size="sm" shape="fab" :prefix-icon="X" aria-label="Cerrar panel de tarea" title="Cerrar panel" @click="entryInspectorOpen = false" />
+            </div>
           </header>
           <div ref="entryInspectorScroll" class="knote-entry-inspector-scroll">
             <div class="knote-entry-detail-title-row">
@@ -1697,37 +1852,55 @@ onBeforeUnmount(() => {
             </div>
 
             <section class="knote-inspector-section">
-              <div class="knote-inspector-section-heading"><h2 id="entry-inspector-heading">Propiedades</h2><small>Información rápida para organizar la tarea.</small></div>
+              <div class="knote-inspector-section-heading knote-detail-properties-heading"><h2 id="entry-inspector-heading">Propiedades de {{ detailEntry.title }}</h2></div>
               <div class="knote-entry-detail-properties">
-                <Select v-if="detailPage.type !== 'calendar' && detailPage.type !== 'tasks'" id="entry-detail-status" :model-value="detailEntry.status" label="Estado" :options="statusOptions" size="sm" variant="surface" @update:model-value="setDetailStatus" />
-                <Select id="entry-detail-priority" :model-value="detailEntry.priority || 'Sin prioridad'" label="Prioridad" :options="priorityOptions" size="sm" variant="surface" @update:model-value="setDetailPriority" />
-                <Input id="entry-detail-due" :model-value="entryDateInputValue(detailEntry)" label="Fecha" type="date" size="sm" variant="surface" @update:model-value="updateDetailDue" />
-                <Input id="entry-detail-tags" :model-value="detailTagsDraft" label="Etiquetas" placeholder="Diseño, personal…" hint="Separa las etiquetas con comas." size="sm" variant="surface" @update:model-value="updateDetailTags" />
+                <div v-if="detailPage.type !== 'calendar' && detailPage.type !== 'tasks'" class="knote-detail-property-row">
+                  <Icon :icon="CircleDot" size="sm" class="knote-detail-property-icon" aria-hidden="true" />
+                  <Select id="entry-detail-status" :model-value="detailEntry.status" label="Estado" :options="statusOptions" size="sm" variant="surface" @update:model-value="setDetailStatus" />
+                </div>
+                <div class="knote-detail-property-row">
+                  <Icon :icon="Flag" size="sm" class="knote-detail-property-icon" aria-hidden="true" />
+                  <Select id="entry-detail-priority" :model-value="detailEntry.priority || 'Sin prioridad'" label="Prioridad" :options="priorityOptions" size="sm" variant="surface" @update:model-value="setDetailPriority" />
+                </div>
+                <div class="knote-detail-property-row">
+                  <Icon :icon="CalendarDays" size="sm" class="knote-detail-property-icon" aria-hidden="true" />
+                  <DatePicker v-if="detailDueIsDate(detailEntry)" id="entry-detail-due" :model-value="detailDateValue(detailEntry)" label="Fecha" locale="es-ES" :display-format="{ day: 'numeric', month: 'short', year: 'numeric' }" placeholder="Sin fecha" clear-label="Quitar fecha" @update:model-value="updateDetailDueFromPicker" />
+                  <Input v-else id="entry-detail-due-note" :model-value="detailEntry.due" label="Fecha" placeholder="Escribe una fecha o una nota" size="sm" variant="surface" @update:model-value="updateDetailDue" />
+                </div>
+                <div class="knote-detail-property-row">
+                  <Icon :icon="Tag" size="sm" class="knote-detail-property-icon" aria-hidden="true" />
+                  <Input id="entry-detail-tags" :model-value="detailTagsDraft" label="Etiquetas" placeholder="Añadir etiquetas…" size="sm" variant="surface" @update:model-value="updateDetailTags" />
+                </div>
+                <div class="knote-detail-property-row knote-detail-subtasks-row">
+                  <Icon :icon="ListTodo" size="sm" class="knote-detail-property-icon" aria-hidden="true" />
+                  <span class="knote-detail-property-label" aria-hidden="true">Subtareas</span>
+                  <div class="knote-detail-property-value">
+                    <div class="knote-subtask-tools">
+                      <Badge variant="outline" color="secondary" size="sm">{{ detailSubtaskProgress.done }} / {{ detailSubtaskProgress.total }}</Badge>
+                      <Button v-if="detailSubtaskProgress.done" variant="soft" color="neutral" size="sm" :prefix-icon="Trash2" title="Quitar subtareas completadas" @click="clearCompletedSubtasks">Limpiar hechas</Button>
+                    </div>
+                    <div class="knote-subtask-composer">
+                      <Input id="entry-detail-new-subtask" v-model="newSubtaskTitle" label="Escribe una subtarea" placeholder="Añadir una subtarea…" size="sm" variant="surface" @keydown.enter.prevent="addDetailSubtask" />
+                      <Button variant="glass" color="neutral" size="sm" :prefix-icon="Plus" aria-label="Añadir subtarea" title="Añadir subtarea" class="knote-subtask-add" @click="addDetailSubtask">Añadir</Button>
+                    </div>
+                    <ul v-if="entrySubtasks(detailEntry).length" class="knote-detail-subtask-list">
+                      <li v-for="(subtask, index) in entrySubtasks(detailEntry)" :key="subtask.id" class="knote-detail-subtask" :class="{ 'knote-detail-subtask--done': subtask.done }">
+                        <Checkbox :id="'entry-subtask-check-' + subtask.id" :model-value="subtask.done" :label="'Marcar como hecha: ' + subtask.title" size="sm" variant="surface" class="knote-subtask-toggle" @update:model-value="(done) => setDetailSubtaskDone(subtask.id, done)" />
+                        <Input :id="'entry-subtask-title-' + subtask.id" :model-value="subtask.title" :label="'Nombre de subtarea ' + (index + 1)" size="sm" variant="surface" class="knote-subtask-name" @update:model-value="(title) => setDetailSubtaskTitle(subtask.id, String(title))" @keydown.enter.stop.prevent="focusNewSubtask" />
+                        <Button variant="soft" color="neutral" size="sm" shape="fab" :prefix-icon="Trash2" :aria-label="'Eliminar subtarea ' + subtask.title" title="Eliminar subtarea" class="knote-subtask-remove" @click="removeDetailSubtask(subtask.id)" />
+                      </li>
+                    </ul>
+                    <p v-else class="knote-subtask-empty">Todavía no hay subtareas.</p>
+                  </div>
+                </div>
               </div>
-            </section>
-
-            <section class="knote-inspector-section knote-inspector-subtasks">
-              <div class="knote-inspector-section-heading"><div><h2>Subtareas</h2><small>Marca cada paso o pulsa Intro para añadir otro.</small></div><div class="knote-subtask-tools"><Badge variant="outline" color="secondary" size="sm">{{ detailSubtaskProgress.done }} / {{ detailSubtaskProgress.total }}</Badge><Button v-if="detailSubtaskProgress.done" variant="soft" color="neutral" size="sm" :prefix-icon="Trash2" title="Quitar subtareas completadas" @click="clearCompletedSubtasks">Limpiar hechas</Button></div></div>
-              <div class="knote-subtask-composer">
-                <Input id="entry-detail-new-subtask" v-model="newSubtaskTitle" label="Escribe una subtarea" placeholder="Ej. Revisar el diseño" size="sm" variant="surface" @keydown.enter.prevent="addDetailSubtask" />
-                <Button variant="glass" color="neutral" size="sm" :prefix-icon="Plus" aria-label="Añadir subtarea" title="Añadir subtarea" class="knote-subtask-add" @click="addDetailSubtask">Añadir</Button>
-              </div>
-              <ul v-if="entrySubtasks(detailEntry).length" class="knote-detail-subtask-list">
-                <li v-for="(subtask, index) in entrySubtasks(detailEntry)" :key="subtask.id" class="knote-detail-subtask" :class="{ 'knote-detail-subtask--done': subtask.done }">
-                  <Checkbox :id="'entry-subtask-check-' + subtask.id" :model-value="subtask.done" :label="'Marcar como hecha: ' + subtask.title" size="sm" variant="surface" class="knote-subtask-toggle" @update:model-value="(done) => setDetailSubtaskDone(subtask.id, done)" />
-                  <Input :id="'entry-subtask-title-' + subtask.id" :model-value="subtask.title" :label="'Nombre de subtarea ' + (index + 1)" size="sm" variant="surface" class="knote-subtask-name" @update:model-value="(title) => setDetailSubtaskTitle(subtask.id, String(title))" @keydown.enter.stop.prevent="focusNewSubtask" />
-                  <Button variant="soft" color="neutral" size="sm" shape="fab" :prefix-icon="Trash2" :aria-label="'Eliminar subtarea ' + subtask.title" title="Eliminar subtarea" class="knote-subtask-remove" @click="removeDetailSubtask(subtask.id)" />
-                </li>
-              </ul>
-              <p v-else class="knote-subtask-empty">Todavía no hay subtareas en esta tarea.</p>
             </section>
 
             <section class="knote-inspector-section knote-entry-detail-content">
-              <div class="knote-inspector-section-heading"><h2>Descripción</h2><small>Notas, contexto y bloques de contenido.</small></div>
+              <div class="knote-inspector-section-heading"><h2>Descripción</h2></div>
               <BlockEditor ref="taskDescriptionEditor" :key="'detail-' + detailEntry.id" :model-value="detailEntry.content || ''" :page-id="'detail-' + detailEntry.id" placeholder="Escribe una descripción…" class="knote-task-detail-editor" @update:model-value="updateDetailContent" />
             </section>
           </div>
-          <footer class="knote-entry-inspector-footer"><span class="knote-inspector-saved"><Icon :icon="Check" size="xs" />Guardado automático</span><span class="knote-inspector-actions"><Button variant="soft" color="neutral" size="sm" @click="duplicateDetailEntry">Duplicar</Button><Button variant="soft" color="destructive" size="sm" @click="deleteEntryModalOpen = true">Eliminar</Button></span></footer>
         </Card>
       </aside>
 
