@@ -130,11 +130,6 @@
         "default": "\"en-US\""
       },
       {
-        "name": "displayFormat",
-        "type": "Intl.DateTimeFormatOptions | undefined",
-        "required": false
-      },
-      {
         "name": "placeholder",
         "type": "string | undefined",
         "values": [
@@ -142,15 +137,6 @@
         ],
         "required": false,
         "default": "\"Choose a date\""
-      },
-      {
-        "name": "clearLabel",
-        "type": "string | undefined",
-        "values": [
-          "string"
-        ],
-        "required": false,
-        "default": "\"Clear date\""
       },
       {
         "name": "required",

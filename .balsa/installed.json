@@ -860,6 +860,30 @@
         "src/components/ui/form.ts",
         "src/components/ui/types.ts"
       ]
+    },
+    "@balsa/resizable": {
+      "registry": "@balsa/resizable",
+      "namespace": "@balsa",
+      "installedVersion": "0.2.0",
+      "contractVersion": "0.2.0",
+      "designSystemVersion": "0.8.1",
+      "originalSourceHash": "sha256-5c3b66091bfed89c03b68fb603fc2f44b8b6bdac19908f107d8ccb15b78805b6",
+      "installedSourceHash": "sha256-5c3b66091bfed89c03b68fb603fc2f44b8b6bdac19908f107d8ccb15b78805b6",
+      "dependencies": [
+        "vue",
+        "@lucide/vue",
+        "tailwind-merge"
+      ],
+      "registryDependencies": [
+        "@balsa/icon",
+        "@balsa/balsa-theme"
+      ],
+      "targetPath": "src/components/ui/Resizable.vue",
+      "files": [
+        "src/components/ui/Resizable.vue",
+        "src/components/ui/classes.ts",
+        "src/components/ui/form.ts"
+      ]
     }
   }
 }

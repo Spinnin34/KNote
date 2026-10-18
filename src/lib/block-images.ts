@@ -1,3 +1,5 @@
+import { invoke, isTauri } from '@tauri-apps/api/core';
+
 const DATABASE_NAME = 'knote-block-assets';
 const STORE_NAME = 'images';
 let database: Promise<IDBDatabase> | null = null;
@@ -15,9 +17,15 @@ function openDatabase(): Promise<IDBDatabase> {
   return database;
 }
 
-export async function saveBlockImage(file: Blob): Promise<string> {
+export async function saveBlockImage(file: Blob, requestedId?: string): Promise<string> {
+  if (isTauri()) {
+    const id = requestedId ?? crypto.randomUUID();
+    const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
+    await invoke('save_asset', { id, mimeType: file.type, bytes });
+    return id;
+  }
   const db = await openDatabase();
-  const id = crypto.randomUUID();
+  const id = requestedId ?? crypto.randomUUID();
   await new Promise<void>((resolve, reject) => {
     const transaction = db.transaction(STORE_NAME, 'readwrite');
     transaction.objectStore(STORE_NAME).put(file, id);
@@ -29,6 +37,10 @@ export async function saveBlockImage(file: Blob): Promise<string> {
 }
 
 export async function deleteBlockImage(id: string): Promise<void> {
+  if (isTauri()) {
+    await invoke('delete_asset', { id });
+    return;
+  }
   const db = await openDatabase();
   await new Promise<void>((resolve, reject) => {
     const transaction = db.transaction(STORE_NAME, 'readwrite');
@@ -40,6 +52,7 @@ export async function deleteBlockImage(id: string): Promise<void> {
 }
 
 export async function listBlockImageIds(): Promise<string[]> {
+  if (isTauri()) return invoke<string[]>('list_asset_ids');
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
     const request = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).getAllKeys();
@@ -49,6 +62,12 @@ export async function listBlockImageIds(): Promise<string[]> {
 }
 
 export async function getBlockImage(id: string): Promise<Blob | null> {
+  if (isTauri()) {
+    const asset = await invoke<{ bytes: number[]; mimeType: string } | null>('get_asset', { id });
+    if (!asset) return null;
+    const buffer = Uint8Array.from(asset.bytes).buffer as ArrayBuffer;
+    return new Blob([buffer], { type: asset.mimeType });
+  }
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
     const request = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).get(id);

@@ -1,0 +1,280 @@
+/* Database pages keep the title close to the working area. */
+.knote-canvas--board { padding-top: .75rem; }
+.knote-canvas--board .knote-page-banner-empty { min-height: .5rem; margin-bottom: .15rem; }
+.knote-canvas--board .knote-document-heading {
+  display: grid; grid-template-columns: 3.7rem minmax(0, 1fr); align-items: center;
+  column-gap: .85rem; min-height: 3.7rem; margin-bottom: .55rem;
+}
+.knote-canvas--board .knote-document-heading .knote-page-glyph { grid-column: 1; grid-row: 1; }
+.knote-canvas--board .knote-document-heading > [data-balsa="badge"] { display: none; }
+.knote-canvas--board .knote-document-heading > [data-balsa="input"] { grid-column: 2; grid-row: 1; min-width: 0; }
+.knote-canvas--board .knote-document-heading .knote-title-field { margin: 0; }
+.knote-canvas--board .knote-page-summary-editor { margin-bottom: .35rem; }
+.knote-canvas--board .knote-page-summary-editor .knote-block-editor { min-height: 2.2rem; padding-block: .2rem; }
+
+/* The database behaves like an editable sheet, with quiet rows and stable controls. */
+.knote-database-shell { row-gap: .45rem; margin-top: .25rem; }
+.knote-database-table table { width: 100%; min-width: 53rem; table-layout: auto; }
+.knote-database-table thead th { height: 2.2rem; padding-inline: .65rem; white-space: nowrap; }
+.knote-database-table tbody td, .knote-database-table tbody th { height: 2.7rem; padding-inline: .65rem; font-size: .81rem; }
+.knote-database-table .knote-table-entry-row > th:first-child { min-width: 14rem; }
+.knote-database-table .knote-table-description-heading,
+.knote-database-table .knote-table-description-cell { min-width: 16rem; }
+.knote-database-table .knote-table-status-heading,
+.knote-database-table .knote-table-status-cell { min-width: 7rem; }
+.knote-database-table .knote-table-priority-heading,
+.knote-database-table .knote-table-priority-cell { min-width: 7.4rem; }
+.knote-database-table .knote-table-date-heading,
+.knote-database-table .knote-table-date-cell { min-width: 6rem; }
+.knote-database-table .knote-table-tags-heading,
+.knote-database-table .knote-table-tags-cell { min-width: 6rem; }
+.knote-table-entry-name { font-size: .82rem; font-weight: 570; }
+.knote-table-description-preview { font-size: .76rem; }
+.knote-table-entry-add[data-balsa="button"] { opacity: .42; }
+.knote-table-entry-row:hover .knote-table-entry-add[data-balsa="button"],
+.knote-table-entry-add[data-balsa="button"]:focus-visible { opacity: 1; }
+.knote-database-table .knote-table-entry-row--selected > th,
+.knote-database-table .knote-table-entry-row--selected > td { background: color-mix(in oklab, var(--balsa-role-accent) 4%, var(--balsa-role-background)) !important; }
+.knote-database-table tbody tr:not(.knote-table-entry-row--selected):hover > th,
+.knote-database-table tbody tr:not(.knote-table-entry-row--selected):hover > td { background: color-mix(in oklab, var(--balsa-role-foreground) 1.5%, var(--balsa-role-background)) !important; }
+
+/* A task panel uses a focused, readable subset of database properties. */
+.knote-main--inspector .knote-database-table table { width: 100%; min-width: 34rem; table-layout: auto; }
+.knote-main--inspector .knote-database-table :is(th, td) { width: auto !important; }
+.knote-main--inspector .knote-database-table thead th:first-child { min-width: 14rem; }
+.knote-main--inspector .knote-database-table .knote-table-status-heading,
+.knote-main--inspector .knote-database-table .knote-table-status-cell { min-width: 7rem; }
+.knote-main--inspector .knote-database-table .knote-table-priority-heading,
+.knote-main--inspector .knote-database-table .knote-table-priority-cell { min-width: 7.4rem; }
+.knote-main--inspector .knote-database-table .knote-table-date-heading,
+.knote-main--inspector .knote-database-table .knote-table-date-cell { min-width: 6rem; }
+.knote-main--inspector .knote-table-unprioritized { width: auto; font-size: .7rem; }
+
+/* Editing a subtask stays inside its parent row. */
+.knote-database-table .knote-table-subtask-row > th,
+.knote-database-table .knote-table-subtask-row > td { height: 2.35rem; background: color-mix(in oklab, var(--balsa-role-surface) 23%, var(--balsa-role-background)); }
+.knote-table-subtask-title { gap: .35rem; padding-left: 2.1rem; }
+.knote-table-subtask-check { flex: 0 0 auto; }
+.knote-table-subtask-check[data-balsa="checkbox"] > span:last-child { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.knote-table-subtask-title [data-balsa="input"],
+.knote-table-add-subtask [data-balsa="input"],
+.knote-table-new-entry [data-balsa="input"] { min-width: 0; flex: 1 1 auto; }
+.knote-table-subtask-title [data-balsa="input"] > label,
+.knote-table-add-subtask [data-balsa="input"] > label,
+.knote-table-new-entry [data-balsa="input"] > label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.knote-table-subtask-input[data-balsa-control],
+.knote-table-new-subtask-input[data-balsa-control],
+.knote-table-new-entry-input[data-balsa-control] {
+  width: 100%; min-height: 1.9rem !important; padding: .15rem .35rem !important;
+  border: 1px solid transparent !important; border-radius: .42rem !important;
+  background: transparent !important; box-shadow: none !important;
+  color: var(--balsa-role-foreground) !important; font-size: .8rem !important;
+}
+.knote-table-subtask-input[data-balsa-control]:hover,
+.knote-table-new-subtask-input[data-balsa-control]:hover,
+.knote-table-new-entry-input[data-balsa-control]:hover,
+.knote-table-subtask-input[data-balsa-control]:focus,
+.knote-table-new-subtask-input[data-balsa-control]:focus,
+.knote-table-new-entry-input[data-balsa-control]:focus {
+  border-color: color-mix(in oklab, var(--balsa-role-foreground) 12%, transparent) !important;
+  background: color-mix(in oklab, var(--balsa-role-surface) 55%, var(--balsa-role-background)) !important;
+  outline: none !important; box-shadow: none !important;
+}
+.knote-shell .knote-table-subtask-input[data-balsa-control]:focus,
+.knote-shell .knote-table-new-subtask-input[data-balsa-control]:focus,
+.knote-shell .knote-table-new-entry-input[data-balsa-control]:focus {
+  border-color: color-mix(in oklab, var(--balsa-role-foreground) 12%, transparent) !important;
+}
+.knote-table-add-subtask, .knote-table-new-entry { display: flex; width: min(100%, 32rem); min-width: 0; align-items: center; gap: .4rem; color: var(--balsa-role-secondary); }
+.knote-table-add-subtask { width: min(100%, 15rem); margin-left: 2.1rem; }
+.knote-table-add-subtask > [data-balsa="input"] { flex: 1 1 auto; min-width: 0; }
+.knote-table-add-subtask > [data-balsa="button"] { flex: 0 0 auto; }
+.knote-table-add-subtask [data-balsa="button"] { min-height: 1.8rem; padding-inline: .35rem; border-color: transparent !important; background: transparent !important; color: var(--balsa-role-secondary); font-size: .74rem; }
+.knote-table-add-subtask .knote-table-new-subtask-input[data-balsa-control] {
+  border-color: color-mix(in oklab, var(--balsa-role-foreground) 9%, transparent) !important;
+  background: color-mix(in oklab, var(--balsa-role-surface) 42%, var(--balsa-role-background)) !important;
+}
+.knote-table-add-subtask > [data-balsa="button"]:not(:only-child) {
+  padding-inline: .58rem; border: 1px solid color-mix(in oklab, var(--balsa-role-accent) 16%, transparent) !important;
+  border-radius: .42rem; background: color-mix(in oklab, var(--balsa-role-accent) 9%, var(--balsa-role-surface)) !important;
+  color: var(--balsa-role-foreground);
+}
+.knote-table-add-subtask > [data-balsa="button"]:disabled { opacity: .46; }
+.knote-database-table .knote-table-add-subtask-row > td,
+.knote-database-table .knote-table-new-entry-row > td { height: 2.2rem; padding-block: .15rem; border-color: transparent !important; }
+.knote-table-new-entry { width: min(100%, 25rem); margin-left: .65rem; }
+.knote-table-new-entry-input::placeholder,
+.knote-table-new-subtask-input::placeholder { color: var(--balsa-role-secondary); opacity: .78; }
+
+.knote-delete-entry-copy { margin: 0; color: var(--balsa-role-secondary); font-size: .86rem; }
+
+@media (max-width: 980px) {
+  .knote-canvas--board .knote-document-heading { grid-template-columns: 3.2rem minmax(0, 1fr); }
+  .knote-canvas--board .knote-page-icon-picker > button { width: 3.2rem; height: 3.2rem; min-height: 3.2rem; }
+  .knote-database-toolbar { flex-wrap: wrap; }
+}
+
+/* Final layout contract: keep each view inside its column and scroll long views locally. */
+.knote-main,
+.knote-canvas,
+.knote-database-shell,
+.knote-database-table,
+.knote-entry-inspector,
+.knote-entry-inspector-card,
+.knote-entry-inspector-scroll { min-width: 0; box-sizing: border-box; }
+.knote-main--inspector { grid-template-columns: minmax(0, 1.18fr) minmax(25rem, .82fr); }
+.knote-main--inspector > .knote-canvas { width: 100%; max-width: none; min-width: 0; }
+.knote-canvas--document { margin-inline: auto; }
+.knote-block-editor-shell:is(.knote-document-editor, .knote-page-summary-editor, .knote-folder-description) { width: 100%; margin-inline: 0 !important; }
+.knote-block-editor-shell:is(.knote-document-editor, .knote-page-summary-editor, .knote-folder-description) > .knote-block-editor { width: 100%; margin-inline: 0 !important; padding-left: 0 !important; }
+.knote-block-editor-shell.knote-task-detail-editor { width: 100%; margin-inline: 0 !important; }
+.knote-block-editor-shell.knote-task-detail-editor > .knote-block-editor { width: 100%; margin-inline: 0 !important; padding-left: 0 !important; }
+.knote-database-table[data-balsa="table"] { width: 100%; overscroll-behavior-inline: contain; }
+.knote-board { width: 100%; margin-inline: 0; overflow-x: auto; overscroll-behavior-inline: contain; }
+.knote-board-card { backdrop-filter: none; }
+.knote-block-editor li[data-task] input[type="checkbox"] {
+  display: inline-grid; width: 1.1rem; height: 1.1rem; place-content: center; margin: 0 .48rem 0 0;
+  appearance: none; border: 1.5px solid color-mix(in oklab, var(--balsa-role-secondary) 60%, transparent);
+  border-radius: .28rem; background: var(--balsa-role-background); color: var(--balsa-role-primary-foreground);
+  cursor: pointer; vertical-align: -.16rem; transition: background-color 100ms ease, border-color 100ms ease;
+}
+.knote-block-editor li[data-task] input[type="checkbox"]::after {
+  box-sizing: border-box; width: .5rem; height: .29rem; content: ""; opacity: 0;
+  border: solid currentColor; border-width: 0 0 2px 2px; background: transparent; clip-path: none;
+  transform: translateY(-.06rem) rotate(-45deg); transform-origin: center;
+  transition: opacity 80ms ease;
+}
+.knote-block-editor li[data-task] input[type="checkbox"]:checked {
+  border-color: var(--balsa-role-accent); background: var(--balsa-role-accent);
+}
+.knote-block-editor li[data-task] input[type="checkbox"]:checked::after { opacity: 1; }
+.knote-block-editor li[data-task] input[type="checkbox"]:focus-visible {
+  outline: 1px solid color-mix(in oklab, var(--balsa-role-accent) 58%, transparent); outline-offset: 2px;
+}
+
+@media (max-width: 1080px) {
+  .knote-main--inspector { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 980px) {
+  .knote-canvas--document { width: min(100%, calc(var(--knote-canvas-width) + 7rem)); }
+}
+@media (max-width: 680px) {
+  .knote-topbar { min-width: 0; gap: .4rem; overflow: hidden; }
+  .knote-topbar-left { min-width: 0; flex: 1 1 auto; gap: .3rem; overflow: hidden; }
+  .knote-topbar-left > .knote-mobile-nav { flex: 0 0 auto; }
+  .knote-topbar-left [data-balsa="breadcrumb"] { min-width: 0; overflow: hidden; }
+  .knote-topbar-left [data-balsa="breadcrumb"] ol { min-width: 0; flex-wrap: nowrap; overflow: hidden; white-space: nowrap; }
+  .knote-topbar-left [data-balsa="breadcrumb"] ol > li:not(:first-child):not(:last-child) { display: none; }
+  .knote-topbar-left [data-balsa="breadcrumb"] ol > li:last-child { min-width: 0; overflow: hidden; }
+  .knote-topbar-left [data-balsa="breadcrumb"] ol > li:last-child::before { margin: 0 .25rem; color: var(--balsa-role-muted-foreground); content: "/"; }
+  .knote-topbar-left [data-balsa="breadcrumb"] ol > li:last-child > span { max-width: 8.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .knote-topbar-actions { min-width: 0; flex: 0 0 auto; }
+  .knote-topbar-copy-link[data-balsa="button"] { width: 2.2rem; min-width: 2.2rem; flex: 0 0 2.2rem; gap: 0 !important; padding-inline: 0 !important; font-size: 0 !important; }
+  .knote-topbar-copy-link [data-balsa="icon"] { flex: 0 0 auto; margin: 0 !important; }
+  .knote-canvas--document { width: 100%; padding: 1rem .85rem 1.6rem; }
+  .knote-board { grid-template-columns: repeat(3, minmax(15rem, 1fr)); }
+  .knote-entry-detail-properties { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Compact, Notion-like task properties: one quiet row per property. */
+.knote-entry-inspector-scroll { gap: .78rem; padding: .9rem 1rem; }
+.knote-entry-detail-title-row { align-items: flex-start; flex-direction: column; gap: .18rem; padding: .12rem 0 .3rem; }
+.knote-entry-detail-title-row [data-balsa="input"] { display: contents; }
+.knote-entry-detail-title-row [data-balsa="input"] > label {
+  position: absolute !important; width: 1px !important; height: 1px !important; overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important;
+}
+.knote-entry-detail-title-row [data-balsa="input"] > .relative { width: 100%; }
+.knote-entry-detail-title-row .knote-entry-inspector-title[data-balsa-control] {
+  min-height: 2.7rem !important; padding: .1rem 0 !important; border-color: transparent !important;
+  background: transparent !important; font-size: 1.55rem !important; font-weight: 680 !important;
+  letter-spacing: -.035em; line-height: 1.18;
+}
+button[id^="entry-icon-"][id$="-trigger"] {
+  width: 2.35rem; height: 2.35rem; min-height: 2.35rem; border-color: transparent !important;
+  border-radius: .55rem !important; background: transparent !important;
+}
+button[id^="entry-icon-"][id$="-trigger"]:hover { background: var(--balsa-role-muted) !important; }
+button[id^="entry-icon-"][id$="-trigger"] .knote-icon-trigger { width: 1.35rem; height: 1.35rem; }
+.knote-inspector-section { gap: .2rem; }
+.knote-detail-properties-heading { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+.knote-entry-detail-properties { display: grid; grid-template-columns: minmax(0, 1fr); gap: .08rem; }
+.knote-detail-property-row {
+  display: grid; min-width: 0; grid-template-columns: 1rem minmax(5.25rem, 6.4rem) minmax(0, 1fr);
+  align-items: center; gap: .48rem; min-height: 2.15rem; padding: .08rem .22rem; border-radius: .42rem;
+}
+.knote-detail-property-row:hover { background: color-mix(in oklab, var(--balsa-role-foreground) 3%, transparent); }
+.knote-detail-property-icon { grid-column: 1; grid-row: 1; width: .9rem; height: .9rem; color: var(--balsa-role-secondary); }
+.knote-detail-property-label { grid-column: 2; grid-row: 1; color: var(--balsa-role-secondary); font-size: .75rem; font-weight: 450; line-height: 1.3; }
+.knote-detail-property-row > :is([data-balsa="input"], [data-balsa="select"], [data-balsa="date-picker"]) { display: contents; }
+.knote-detail-property-row > :is([data-balsa="input"], [data-balsa="select"]) > label,
+.knote-detail-property-row > [data-balsa="date-picker"] > label {
+  grid-column: 2; grid-row: 1; margin: 0 !important; color: var(--balsa-role-secondary) !important;
+  font-size: .75rem !important; font-weight: 450 !important; line-height: 1.3;
+}
+.knote-detail-property-row > [data-balsa="input"] > .relative,
+.knote-detail-property-row > [data-balsa="select"] > .relative { grid-column: 3; grid-row: 1; min-width: 0; }
+.knote-detail-property-row > [data-balsa="input"] > span[id$="-hint"] { grid-column: 3; grid-row: 2; }
+.knote-detail-property-row > [data-balsa="date-picker"] > [data-balsa="popup"] {
+  grid-column: 3; grid-row: 1; display: flex; width: 100%; min-width: 0;
+}
+.knote-detail-property-row > [data-balsa="date-picker"] > input[type="hidden"] { display: none; }
+.knote-detail-property-row [data-balsa-control],
+.knote-detail-property-row [data-balsa="popup"] > button {
+  box-sizing: border-box; width: 100%; min-width: 0; min-height: 1.95rem !important; padding: .24rem .42rem !important;
+  border-color: transparent !important; border-radius: .38rem !important; background: transparent !important;
+  box-shadow: none !important; color: var(--balsa-role-foreground); font-size: .77rem !important; font-weight: 450 !important;
+}
+.knote-detail-property-row [data-balsa-control]:hover,
+.knote-detail-property-row [data-balsa-control]:focus-visible,
+.knote-detail-property-row [data-balsa="popup"] > button:hover {
+  border-color: color-mix(in oklab, var(--balsa-role-foreground) 12%, transparent) !important;
+  background: color-mix(in oklab, var(--balsa-role-background) 66%, transparent) !important;
+}
+.knote-detail-property-row [data-balsa-control]::placeholder { color: var(--balsa-role-secondary); opacity: .8; }
+.knote-detail-subtasks-row { align-items: start; padding-top: .26rem; }
+.knote-detail-subtasks-row > .knote-detail-property-icon,
+.knote-detail-subtasks-row > .knote-detail-property-label { margin-top: .42rem; }
+.knote-detail-property-value { grid-column: 3; grid-row: 1; display: flex; min-width: 0; flex-direction: column; gap: .28rem; }
+.knote-detail-property-value .knote-subtask-tools { justify-content: space-between; min-height: 1.55rem; }
+.knote-detail-property-value .knote-subtask-tools [data-balsa="badge"] { padding: .08rem .38rem; font-size: .63rem !important; }
+.knote-detail-property-value .knote-subtask-tools [data-balsa="button"] { min-height: 1.55rem; padding-inline: .38rem; font-size: .64rem; }
+.knote-subtask-composer { grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: .28rem; }
+.knote-subtask-composer > [data-balsa="input"] { display: contents; }
+.knote-subtask-composer > [data-balsa="input"] > label {
+  position: absolute !important; width: 1px !important; height: 1px !important; overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important;
+}
+.knote-subtask-composer > [data-balsa="input"] > .relative { grid-column: 1; min-width: 0; }
+.knote-subtask-composer [data-balsa-control] { min-height: 1.9rem !important; padding: .22rem .42rem !important; font-size: .72rem !important; }
+.knote-subtask-add[data-balsa="button"] { min-width: 4.6rem; min-height: 1.9rem; padding-inline: .5rem; font-size: .69rem; }
+.knote-detail-subtask-list {
+  max-height: min(14rem, 30vh); gap: .06rem; padding: .08rem 0; border: 0; border-radius: 0; background: transparent;
+}
+.knote-detail-subtask { min-height: 2.15rem; gap: .34rem; padding-inline: .04rem; }
+.knote-detail-subtask:hover { background: color-mix(in oklab, var(--balsa-role-foreground) 4%, transparent); }
+.knote-subtask-name[data-balsa-control] { min-height: 1.85rem !important; font-size: .72rem !important; }
+.knote-subtask-empty { padding: .15rem 0 .1rem; font-size: .7rem; }
+.knote-entry-detail-content { min-height: 10rem; gap: .4rem; padding-top: .72rem; border-top: 1px solid var(--balsa-role-border); }
+.knote-entry-detail-content .knote-inspector-section-heading h2 { color: var(--balsa-role-secondary); font-size: .77rem; font-weight: 560; }
+.knote-entry-detail-content .knote-task-detail-editor {
+  min-height: 10rem; margin: 0; padding: .18rem 0; border: 0; border-radius: 0; background: transparent;
+}
+.knote-entry-detail-content .knote-task-detail-editor .knote-block-editor { min-height: 9rem; padding: .1rem 0 .5rem !important; }
+.knote-entry-inspector-header-actions { display: flex; flex: 0 0 auto; align-items: center; gap: .3rem; }
+.knote-task-detail-menu {
+  display: inline-flex; width: 2rem; height: 2rem; min-height: 2rem !important; align-items: center; justify-content: center;
+  padding: 0 !important; border-color: transparent !important; border-radius: .48rem !important;
+  background: transparent !important; box-shadow: none !important; color: var(--balsa-role-secondary) !important;
+}
+.knote-task-detail-menu:hover { background: color-mix(in oklab, var(--balsa-role-foreground) 6%, var(--balsa-role-surface)) !important; color: var(--balsa-role-foreground) !important; }
+.knote-entry-inspector-header-actions > [data-balsa="button"] { width: 2rem; min-width: 2rem; height: 2rem; min-height: 2rem; }
+
+@media (max-width: 680px) {
+  .knote-entry-inspector-scroll { gap: .64rem; padding: .75rem .8rem; }
+  .knote-detail-property-row { grid-template-columns: .9rem minmax(4.6rem, 5.35rem) minmax(0, 1fr); gap: .35rem; }
+  .knote-entry-detail-title-row .knote-entry-inspector-title[data-balsa-control] { font-size: 1.42rem !important; }
+}
+
+/* Leave scrollable space after the last document block while writing. */
+.knote-canvas--document:has(.knote-document-editor) { padding-bottom: max(45vh, 18rem); }

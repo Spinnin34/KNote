@@ -161,22 +161,22 @@ const panelClasses = computed(() => [
 const panelEnterFromClass = computed(() =>
   props.presentation === "sheet"
     ? "translate-y-[105%] opacity-100"
-    : "translate-y-20 scale-95 opacity-0",
+    : "translate-y-3 scale-95 opacity-0",
 );
 const panelLeaveToClass = computed(() =>
   props.presentation === "sheet"
     ? "translate-y-[105%] opacity-100"
-    : "translate-y-20 scale-95 opacity-0",
+    : "translate-y-3 scale-95 opacity-0",
 );
 const panelEnterActiveClass = computed(() =>
   props.presentation === "sheet"
-    ? "transition-all duration-500 ease-out"
-    : "transition-all duration-300 ease-out",
+    ? "transition-[opacity,transform] duration-[200ms] ease-out motion-reduce:transition-none"
+    : "transition-[opacity,transform] duration-[180ms] ease-out motion-reduce:transition-none",
 );
 const panelLeaveActiveClass = computed(() =>
   props.presentation === "sheet"
-    ? "transition-all duration-300 ease-in"
-    : "transition-all duration-300 ease-in",
+    ? "transition-[opacity,transform] duration-[160ms] ease-in motion-reduce:transition-none"
+    : "transition-[opacity,transform] duration-[140ms] ease-in motion-reduce:transition-none",
 );
 const closeButtonClasses = computed(() =>
   props.presentation === "fullscreen"
@@ -336,10 +336,10 @@ onBeforeUnmount(() => {
   <Teleport to="body" :disabled="props.contained">
     <Transition
       appear
-      enter-active-class="transition-opacity duration-500 ease-out"
+      enter-active-class="transition-opacity duration-[150ms] ease-out motion-reduce:transition-none"
       enter-from-class="opacity-0"
       enter-to-class="opacity-100"
-      leave-active-class="transition-opacity duration-200 ease-in"
+      leave-active-class="transition-opacity duration-[120ms] ease-in motion-reduce:transition-none"
       leave-from-class="opacity-100"
       leave-to-class="opacity-0"
     >
