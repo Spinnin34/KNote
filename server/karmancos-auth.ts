@@ -406,8 +406,9 @@ export async function handleCallback(request: Request): Promise<Response> {
       clearTransaction,
       cookieHeader(request, SESSION_COOKIE, sessionValue, SESSION_TTL_SECONDS),
     ]);
-  } catch {
-    return redirect(appRedirect(settings, transaction.returnTo, 'callback'), [clearTransaction], 302);
+  } catch (error) {
+    logCallbackFailure(error);
+    return redirect(appRedirect(settings, transaction.returnTo, callbackFailureCode(error)), [clearTransaction], 302);
   }
 }
 
@@ -437,6 +438,20 @@ function constantTimeEqual(left: string, right: string): boolean {
   const leftBytes = Buffer.from(left, 'utf8');
   const rightBytes = Buffer.from(right, 'utf8');
   return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes);
+}
+
+function callbackFailureCode(error: unknown): 'credentials' | 'grant' | 'callback' {
+  if (!(error instanceof oidc.ResponseBodyError)) return 'callback';
+  if (error.error === 'invalid_client' || error.error === 'unauthorized_client') return 'credentials';
+  if (error.error === 'invalid_grant') return 'grant';
+  return 'callback';
+}
+
+function logCallbackFailure(error: unknown): void {
+  const details = error instanceof oidc.ResponseBodyError
+    ? { errorType: error.name, oauthError: error.error, status: error.status }
+    : { errorType: error instanceof Error ? error.name : 'UnknownError' };
+  console.error('[Karmancos ID] Callback processing failed', details);
 }
 
 export async function handleAuthRequest(request: Request, route: string): Promise<Response> {

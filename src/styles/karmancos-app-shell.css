@@ -140,7 +140,19 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   padding: .35rem .45rem;
 }
 .knote-workspace-heading { min-height: 2.7rem; margin: .15rem .35rem .35rem; padding: .25rem 2rem .45rem .2rem; border-bottom: 1px solid var(--balsa-role-border); }
-.knote-workspace-heading--footer > .knote-workspace-account-trigger { flex: 1 1 auto; justify-content: flex-start; gap: .48rem; min-width: 0; padding-inline: .22rem; text-align: left; }
+.knote-workspace-heading--footer > .knote-workspace-account-trigger {
+  flex: 1 1 auto;
+  justify-content: flex-start;
+  gap: .62rem;
+  min-width: 0;
+  min-height: 1.75rem;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  text-align: left;
+}
+.knote-workspace-heading--footer > .knote-workspace-account-trigger:hover { background: var(--balsa-material-surface) !important; }
 .knote-workspace-trigger-copy { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: .08rem; }
 .knote-workspace-trigger-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .knote-workspace-trigger-copy small { line-height: 1.2; }

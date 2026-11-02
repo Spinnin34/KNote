@@ -119,6 +119,7 @@ const {
   status: karmancosAuthStatus,
   profile: karmancosProfile,
   errorMessage: karmancosAuthError,
+  errorCode: karmancosAuthErrorCode,
   initialize: initializeKarmancosAuth,
   signIn: signInWithKarmancos,
   signOut: signOutFromKarmancos,
@@ -834,10 +835,22 @@ onBeforeUnmount(() => {
         </p>
 
         <p v-if="karmancosAuthError" class="knote-account-message knote-account-message--error" role="alert">{{ karmancosAuthError }}</p>
-        <section v-if="karmancosAuthError || !karmancosConfigured" class="knote-account-registration-note" aria-label="Configuración necesaria">
+        <section
+          v-if="(!karmancosConfigured && (!karmancosAuthErrorCode || karmancosAuthErrorCode === 'configuration')) || karmancosAuthErrorCode === 'provider'"
+          class="knote-account-registration-note"
+          aria-label="Configuración necesaria"
+        >
           <strong>Comprueba la URL de retorno registrada</strong>
           <code>{{ karmancosCallbackUri }}</code>
           <p>Debe estar registrada exactamente en el cliente de Karmancos ID. El origen web actual es <code>{{ karmancosWebOrigin }}</code>.</p>
+        </section>
+        <section v-else-if="karmancosAuthErrorCode === 'credentials'" class="knote-account-registration-note" aria-label="Credenciales del cliente">
+          <strong>Revisa las credenciales del cliente</strong>
+          <p>El ID y el secreto deben pertenecer al mismo cliente confidencial y estar actualizados en las variables de entorno de Vercel.</p>
+        </section>
+        <section v-else-if="karmancosAuthErrorCode === 'grant'" class="knote-account-registration-note" aria-label="Respuesta de acceso">
+          <strong>Vuelve a iniciar sesión</strong>
+          <p>Si el problema continúa, comprueba el callback registrado y los registros del servidor.</p>
         </section>
         <p v-else-if="!karmancosProfile && karmancosAuthStatus === 'loading'" class="knote-account-message" role="status">Comprobando la sesión…</p>
       </div>

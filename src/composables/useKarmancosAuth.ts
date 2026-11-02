@@ -21,6 +21,7 @@ const configured = ref(false);
 const status = ref<AuthStatus>('loading');
 const profile = shallowRef<KarmancosProfile | null>(null);
 const errorMessage = ref('');
+const errorCode = ref<string | null>(null);
 const isBusy = computed(() => status.value === 'loading' || status.value === 'signing-in');
 
 let initialization: Promise<void> | null = null;
@@ -64,9 +65,12 @@ function consumeAuthError(): void {
   const messages: Record<string, string> = {
     configuration: 'El inicio de sesión todavía no está configurado en el servidor.',
     provider: 'Karmancos ID rechazó el inicio de sesión. Comprueba que la URL de retorno esté registrada exactamente para este cliente.',
+    credentials: 'Karmancos ID rechazó las credenciales. Comprueba que el ID y el secreto pertenezcan al mismo cliente confidencial y estén actualizados en Vercel.',
+    grant: 'Karmancos ID rechazó el código de acceso. Inicia sesión de nuevo y, si persiste, revisa la configuración del callback.',
     state: 'No se pudo validar el retorno de Karmancos ID. Vuelve a iniciar sesión.',
-    callback: 'No se pudo validar tu cuenta con Karmancos ID. Vuelve a iniciar sesión.',
+    callback: 'No se pudo validar tu cuenta con Karmancos ID. Revisa los registros del servidor para identificar el motivo.',
   };
+  errorCode.value = code;
   errorMessage.value = messages[code] ?? messages.provider;
   url.searchParams.delete('authError');
   window.history.replaceState(window.history.state, document.title, `${url.pathname}${url.search}${url.hash}`);
@@ -98,6 +102,7 @@ async function initialize(): Promise<void> {
       profile.value = null;
       configured.value = false;
       status.value = 'signed-out';
+      errorCode.value = 'session';
       errorMessage.value = 'No se pudo comprobar la sesión de Karmancos ID. Vuelve a intentarlo.';
     }
   })();
@@ -106,8 +111,10 @@ async function initialize(): Promise<void> {
 
 function signIn(): void {
   errorMessage.value = '';
+  errorCode.value = null;
   if (!configured.value) {
     status.value = 'unconfigured';
+    errorCode.value = 'configuration';
     errorMessage.value = 'El inicio de sesión todavía no está configurado en el servidor.';
     return;
   }
@@ -120,6 +127,7 @@ function signIn(): void {
 async function signOut(): Promise<void> {
   if (isDesktopRuntime()) return;
   errorMessage.value = '';
+  errorCode.value = null;
   try {
     const response = await fetch('/auth/logout', {
       method: 'POST',
@@ -135,6 +143,7 @@ async function signOut(): Promise<void> {
     profile.value = null;
     status.value = configured.value ? 'signed-out' : 'unconfigured';
   } catch {
+    errorCode.value = 'logout';
     errorMessage.value = 'No se pudo cerrar la sesión de KNote. Inténtalo de nuevo.';
   }
 }
@@ -146,6 +155,7 @@ export function useKarmancosAuth() {
     isBusy: readonly(isBusy),
     profile: readonly(profile),
     errorMessage: readonly(errorMessage),
+    errorCode: readonly(errorCode),
     initialize,
     signIn,
     signOut,
