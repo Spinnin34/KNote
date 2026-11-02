@@ -140,6 +140,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   padding: .35rem .45rem;
 }
 .knote-workspace-heading { min-height: 2.7rem; margin: .15rem .35rem .35rem; padding: .25rem 2rem .45rem .2rem; border-bottom: 1px solid var(--balsa-role-border); }
+.knote-workspace-heading--footer > .knote-workspace-account-trigger { flex: 1 1 auto; justify-content: flex-start; gap: .48rem; min-width: 0; padding-inline: .22rem; text-align: left; }
+.knote-workspace-trigger-copy { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: .08rem; }
+.knote-workspace-trigger-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.knote-workspace-trigger-copy small { line-height: 1.2; }
+.knote-workspace-avatar { flex: 0 0 auto; border: 1px solid var(--balsa-role-border); }
 .knote-workspace-mark {
   display: grid;
   width: 1.75rem;
@@ -168,59 +173,72 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 }
 .knote-sidebar-footer [data-balsa="badge"] { margin-left: auto; }
 
-.knote-account {
-  margin: .5rem .35rem .15rem;
-}
-.knote-account-card {
+.knote-account-modal-content {
   display: flex;
   flex-direction: column;
-  gap: .48rem;
-  width: 100%;
+  gap: 1rem;
 }
-.knote-account-label {
-  margin: 0;
-  color: var(--balsa-role-secondary);
-  font-size: .61rem;
-  font-weight: 600;
-  letter-spacing: .045em;
-}
-.knote-account-identity {
+.knote-account-profile {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: .55rem;
+  gap: .9rem;
 }
-.knote-account-avatar { border-color: var(--balsa-role-border); }
-.knote-account-copy {
+.knote-account-profile-avatar { flex: 0 0 auto; border: 1px solid var(--balsa-role-border); }
+.knote-account-profile-copy {
   display: flex;
   min-width: 0;
-  flex: 1;
   flex-direction: column;
-  gap: .12rem;
+  gap: .24rem;
 }
-.knote-account-copy strong {
-  overflow: hidden;
+.knote-account-profile-copy strong {
+  overflow-wrap: anywhere;
   color: var(--balsa-role-foreground);
-  font-size: .74rem;
-  font-weight: 580;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: .98rem;
+  font-weight: 640;
 }
-.knote-account-copy small {
+.knote-account-profile-copy small {
   overflow: hidden;
   color: var(--balsa-role-secondary);
-  font-size: .65rem;
+  font-size: .76rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.knote-account-login { width: 100%; }
+.knote-account-details {
+  display: grid;
+  gap: .72rem;
+  margin: 0;
+  padding-top: .95rem;
+  border-top: 1px solid var(--balsa-role-border);
+}
+.knote-account-details > div {
+  display: grid;
+  grid-template-columns: minmax(6.5rem, .8fr) minmax(0, 1.2fr);
+  align-items: baseline;
+  gap: .65rem;
+}
+.knote-account-details dt { color: var(--balsa-role-secondary); font-size: .72rem; }
+.knote-account-details dd { overflow-wrap: anywhere; margin: 0; color: var(--balsa-role-foreground); font-size: .78rem; font-weight: 540; }
+.knote-account-intro { margin: 0; color: var(--balsa-role-secondary); font-size: .84rem; line-height: 1.55; }
 .knote-account-message {
   margin: 0;
   color: var(--balsa-role-secondary);
-  font-size: .63rem;
+  font-size: .76rem;
   line-height: 1.45;
 }
 .knote-account-message--error { color: var(--balsa-role-destructive); }
+.knote-account-registration-note {
+  display: grid;
+  gap: .48rem;
+  padding: .8rem;
+  border: 1px solid color-mix(in oklab, var(--balsa-role-destructive) 24%, var(--balsa-role-border));
+  border-radius: var(--balsa-radius-surface);
+  background: var(--balsa-material-surface);
+}
+.knote-account-registration-note strong { color: var(--balsa-role-foreground); font-size: .74rem; font-weight: 620; }
+.knote-account-registration-note code { overflow-wrap: anywhere; color: var(--balsa-role-foreground); font-size: .7rem; }
+.knote-account-registration-note p { margin: 0; color: var(--balsa-role-secondary); font-size: .72rem; line-height: 1.45; }
+.knote-account-modal-action { flex: 1 1 auto; }
 
 .knote-main { min-width: 0; min-height: 100dvh; margin-left: 0; }
 .knote-shell [data-balsa="button"][data-size]:not([data-shape="fab"]) { --balsa-inset-icon: var(--balsa-inset); padding-inline: var(--balsa-inset); }

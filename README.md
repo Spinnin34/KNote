@@ -23,13 +23,13 @@ El acceso con Karmancos ID está disponible solo en la versión web. KNote usa A
 
 Configura en `.env.local` para desarrollo y en las variables de entorno de Vercel para producción:
 
-- `KARMANCOSID_ISSUER`: valor exacto de `issuer` publicado por Discovery. Compruébalo en el despliegue real de Karmancos ID; no uses un emisor de ejemplo.
-- `KARMANCOSID_CLIENT_ID`: identificador aprobado para KNote.
+- `KARMANCOSID_ISSUER`: `https://karmancosid.vercel.app`, verificado contra el campo `issuer` de Discovery.
+- `KARMANCOSID_CLIENT_ID`: identificador público del cliente KNote en Karmancos ID.
 - `KARMANCOSID_CLIENT_SECRET`: secreto de cliente, solo para el servidor. Karmancos ID debe tener este cliente habilitado como confidencial y aceptar `client_secret_basic`.
 - `KNOTE_SESSION_SECRET`: clave independiente, aleatoria y de al menos 32 caracteres para cifrar las cookies de sesión.
-- `KARMANCOSID_REDIRECT_URI`: callback exacto. En producción es `https://knote.karmancos.space/auth/callback`; en desarrollo local usa `http://localhost:5173/auth/callback` y registra esa URI exacta antes de iniciar sesión desde localhost.
+- `KARMANCOSID_REDIRECT_URI`: callback exacto. En producción es `https://knote.karmancos.space/auth/callback`; en desarrollo local usa `http://localhost:5173/auth/callback`.
 
-El origen web `https://knote.karmancos.space` también debe estar aprobado en Karmancos ID. La cuenta conectada muestra su foto, nombre de usuario, nombre y apellidos dentro de **Mi espacio · Personal**. Cerrar sesión elimina la sesión local de KNote. En esta fase no se vinculan cuentas, no se sincronizan notas y todavía no se procesa el callback de backchannel logout.
+Registra en Karmancos ID la URL de retorno exacta y el origen web de cada entorno: `https://knote.karmancos.space/auth/callback` con `https://knote.karmancos.space` en producción; `http://localhost:5173/auth/callback` con `http://localhost:5173` durante desarrollo local. La cuenta conectada muestra su foto, nombre de usuario, nombre y apellidos dentro de **Mi espacio · Personal**. Cerrar sesión elimina la sesión local de KNote. En esta fase no se vinculan cuentas, no se sincronizan notas y todavía no se procesa el callback de backchannel logout.
 
 El inicio de sesión de escritorio no está habilitado. La aplicación de Windows conserva el resto de sus funciones locales.
 

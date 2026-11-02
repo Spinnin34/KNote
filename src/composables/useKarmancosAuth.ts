@@ -63,7 +63,7 @@ function consumeAuthError(): void {
 
   const messages: Record<string, string> = {
     configuration: 'El inicio de sesión todavía no está configurado en el servidor.',
-    provider: 'Karmancos ID no pudo completar el inicio de sesión. Vuelve a intentarlo.',
+    provider: 'Karmancos ID rechazó el inicio de sesión. Comprueba que la URL de retorno esté registrada exactamente para este cliente.',
     state: 'No se pudo validar el retorno de Karmancos ID. Vuelve a iniciar sesión.',
     callback: 'No se pudo validar tu cuenta con Karmancos ID. Vuelve a iniciar sesión.',
   };

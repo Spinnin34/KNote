@@ -20,6 +20,7 @@ import DatePicker from '@/components/ui/DatePicker.vue';
 import Icon from '@/components/ui/Icon.vue';
 import Input from '@/components/ui/Input.vue';
 import Link from '@/components/ui/Link.vue';
+import Modal from '@/components/ui/Modal.vue';
 import Progress from '@/components/ui/Progress.vue';
 import Select from '@/components/ui/Select.vue';
 import Sidebar from '@/components/ui/Sidebar.vue';
@@ -74,6 +75,7 @@ const sidebarCollapsed = ref(true);
 const mobileSidebarOpen = ref(false);
 const createModalOpen = ref(false);
 const preferencesOpen = ref(false);
+const accountModalOpen = ref(false);
 const dataTransferOpen = ref(false);
 const entryModalOpen = ref(false);
 const preferencesTab = ref('appearance');
@@ -129,11 +131,27 @@ const karmancosDisplayName = computed(() => {
   const nameFromParts = [profile.givenName, profile.familyName].filter((part): part is string => Boolean(part)).join(' ');
   return nameFromParts || profile.fullName || 'Nombre no disponible';
 });
+const karmancosAvatarLabel = computed(() => karmancosProfile.value
+  ? `Foto de perfil de ${karmancosDisplayName.value}`
+  : 'Identidad de KNote');
+const karmancosInitials = computed(() => {
+  const profile = karmancosProfile.value;
+  if (!profile) return 'K';
+  const nameParts = [profile.givenName, profile.familyName].filter((part): part is string => Boolean(part));
+  if (nameParts.length) return nameParts.map((part) => part[0]).join('').toLocaleUpperCase('es');
+  return profile.username?.slice(0, 2).toLocaleUpperCase('es') || 'K';
+});
+const karmancosCallbackUri = computed(() => `${window.location.origin}/auth/callback`);
+const karmancosWebOrigin = computed(() => window.location.origin);
 const appPreferencesStyle = computed(() => ({
   '--knote-glass-alpha': preferences.value.glass === 'soft' ? '50%' : preferences.value.glass === 'deep' ? '84%' : '68%',
   '--knote-glass-blur': preferences.value.glass === 'soft' ? '12px' : preferences.value.glass === 'deep' ? '30px' : '20px',
   '--knote-canvas-width': preferences.value.width === 'compact' ? '48rem' : preferences.value.width === 'wide' ? '72rem' : '56rem',
 }));
+async function signOutAndCloseAccount(close: () => void): Promise<void> {
+  await signOutFromKarmancos();
+  if (!karmancosAuthError.value) close();
+}
 const sortedPages = computed(() => [...pages.value].sort((left, right) => right.updatedAt - left.updatedAt));
 const agendaPage = computed(() => sortedPages.value.find((page) => page.type === 'calendar') ?? null);
 const recentPages = computed(() => {
@@ -743,55 +761,111 @@ onBeforeUnmount(() => {
       </template>
       <template #footer>
         <div class="knote-workspace-heading knote-workspace-heading--footer">
-          <span class="knote-workspace-mark">K</span>
-          <span><strong>Mi espacio</strong><small>Personal</small></span>
+          <Button
+            v-if="!isDesktopRuntime()"
+            variant="glass"
+            color="neutral"
+            size="sm"
+            class="knote-workspace-account-trigger"
+            aria-haspopup="dialog"
+            aria-controls="karmancos-account-modal"
+            :aria-expanded="accountModalOpen"
+            @click="accountModalOpen = true"
+          >
+            <Avatar
+              :src="karmancosProfile?.picture ?? undefined"
+              :label="karmancosAvatarLabel"
+              fallback="K"
+              size="sm"
+              shape="rounded"
+              loading="eager"
+              class="knote-workspace-avatar"
+            />
+            <span class="knote-workspace-trigger-copy"><strong>Mi espacio</strong><small>Personal</small></span>
+          </Button>
+          <template v-else>
+            <span class="knote-workspace-mark">K</span>
+            <span><strong>Mi espacio</strong><small>Personal</small></span>
+          </template>
           <Button variant="soft" color="neutral" size="sm" :prefix-icon="Plus" aria-label="Crear una página" title="Crear una página" @click="openCreatePage()" />
           <Button variant="glass" color="neutral" size="sm" :prefix-icon="Settings2" aria-label="Personalizar espacio" title="Personalizar espacio" @click="preferencesOpen = true" />
         </div>
-        <section v-if="!isDesktopRuntime()" class="knote-account" aria-label="Cuenta de Karmancos ID" aria-live="polite">
-          <Card variant="glass" color="neutral" size="sm" padding="sm" class="knote-account-card">
-            <p class="knote-account-label">Cuenta Karmancos ID</p>
-            <div class="knote-account-identity">
-              <Avatar
-                :src="karmancosProfile?.picture ?? undefined"
-                :label="karmancosProfile?.fullName ?? karmancosProfile?.username ?? 'Cuenta de Karmancos ID'"
-                size="md"
-                loading="eager"
-                class="knote-account-avatar"
-              />
-              <span class="knote-account-copy">
-                <strong>{{ karmancosProfile ? (karmancosProfile.username ? '@' + karmancosProfile.username : 'Cuenta conectada') : 'Tu cuenta' }}</strong>
-                <small v-if="karmancosProfile">{{ karmancosDisplayName }}</small>
-                <small v-else>{{ karmancosConfigured ? 'Inicia sesión para mostrar tu perfil' : 'Acceso pendiente de configuración' }}</small>
-              </span>
-              <Button
-                v-if="karmancosProfile"
-                variant="glass"
-                color="neutral"
-                size="sm"
-                :prefix-icon="LogOut"
-                aria-label="Cerrar sesión de KNote"
-                title="Cerrar sesión de KNote"
-                @click="signOutFromKarmancos"
-              />
-            </div>
-            <Button
-              v-if="!karmancosProfile"
-              variant="soft"
-              color="neutral"
-              size="sm"
-              :prefix-icon="LogIn"
-              :loading="karmancosAuthStatus === 'signing-in'"
-              :disabled="!karmancosConfigured || karmancosAuthStatus === 'loading' || karmancosAuthStatus === 'signing-in'"
-              class="knote-account-login"
-              @click="signInWithKarmancos"
-            >Iniciar sesión</Button>
-            <p v-if="karmancosAuthError" class="knote-account-message knote-account-message--error" role="alert">{{ karmancosAuthError }}</p>
-            <p v-else-if="!karmancosConfigured" class="knote-account-message" role="status">El acceso web requiere configurar Karmancos ID en el servidor.</p>
-          </Card>
-        </section>
       </template>
     </Sidebar>
+
+    <Modal
+      v-if="!isDesktopRuntime()"
+      id="karmancos-account-modal"
+      v-model="accountModalOpen"
+      title="Tu cuenta"
+      description="Consulta tu perfil de Karmancos ID y gestiona el acceso a KNote."
+      presentation="dialog"
+      variant="glass"
+      color="neutral"
+      size="sm"
+      close-label="Cerrar cuenta"
+    >
+      <template #eyebrow>Mi espacio personal</template>
+      <div class="knote-account-modal-content">
+        <template v-if="karmancosProfile">
+          <div class="knote-account-profile">
+            <Avatar
+              :src="karmancosProfile.picture ?? undefined"
+              :label="karmancosAvatarLabel"
+              :fallback="karmancosInitials"
+              size="xl"
+              shape="circle"
+              loading="eager"
+              class="knote-account-profile-avatar"
+            />
+            <div class="knote-account-profile-copy">
+              <strong>{{ karmancosDisplayName }}</strong>
+              <small>{{ karmancosProfile.username ? '@' + karmancosProfile.username : 'Cuenta conectada' }}</small>
+            </div>
+          </div>
+          <dl class="knote-account-details">
+            <div><dt>Nombre de usuario</dt><dd>{{ karmancosProfile.username ? '@' + karmancosProfile.username : 'No disponible' }}</dd></div>
+            <div><dt>Nombre</dt><dd>{{ karmancosProfile.givenName || 'No disponible' }}</dd></div>
+            <div><dt>Apellidos</dt><dd>{{ karmancosProfile.familyName || 'No disponible' }}</dd></div>
+          </dl>
+        </template>
+        <p v-else class="knote-account-intro">
+          Inicia sesión con Karmancos ID para mostrar tu foto de perfil, nombre de usuario, nombre y apellidos aquí.
+        </p>
+
+        <p v-if="karmancosAuthError" class="knote-account-message knote-account-message--error" role="alert">{{ karmancosAuthError }}</p>
+        <section v-if="karmancosAuthError || !karmancosConfigured" class="knote-account-registration-note" aria-label="Configuración necesaria">
+          <strong>Comprueba la URL de retorno registrada</strong>
+          <code>{{ karmancosCallbackUri }}</code>
+          <p>Debe estar registrada exactamente en el cliente de Karmancos ID. El origen web actual es <code>{{ karmancosWebOrigin }}</code>.</p>
+        </section>
+        <p v-else-if="!karmancosProfile && karmancosAuthStatus === 'loading'" class="knote-account-message" role="status">Comprobando la sesión…</p>
+      </div>
+      <template #footer="{ close }">
+        <Button
+          v-if="karmancosProfile"
+          variant="soft"
+          color="neutral"
+          size="sm"
+          :prefix-icon="LogOut"
+          class="knote-account-modal-action"
+          @click="signOutAndCloseAccount(close)"
+        >Cerrar sesión</Button>
+        <template v-else>
+          <Button
+            variant="solid"
+            color="primary"
+            size="sm"
+            :prefix-icon="LogIn"
+            :loading="karmancosAuthStatus === 'signing-in'"
+            :disabled="!karmancosConfigured || karmancosAuthStatus === 'loading' || karmancosAuthStatus === 'signing-in'"
+            class="knote-account-modal-action"
+            @click="signInWithKarmancos"
+          >Iniciar sesión</Button>
+          <Button variant="glass" color="neutral" size="sm" @click="close">Cerrar</Button>
+        </template>
+      </template>
+    </Modal>
 
     <div class="knote-main" :class="{ 'knote-main--inspector': entryInspectorOpen && Boolean(detailEntry && detailPage) }">
       <header class="knote-topbar">
