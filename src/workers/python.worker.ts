@@ -1,4 +1,5 @@
-import { loadPyodide } from 'pyodide';
+type PyodideModule = typeof import('pyodide');
+type PyodideRuntime = Awaited<ReturnType<PyodideModule['loadPyodide']>>;
 
 type InitializeMessage = {
   type: 'initialize';
@@ -10,8 +11,14 @@ type RunMessage = { type: 'run'; id: number; code: string };
 type AnalyzeMessage = { type: 'analyze'; id: number; code: string; line: number; column: number; mode: 'complete' | 'signature' | 'hover' | 'syntax' | 'lint' | 'types' };
 type WorkerMessage = InitializeMessage | RunMessage | AnalyzeMessage;
 
-const workerScope = self as unknown as DedicatedWorkerGlobalScope;
-let runtime: Awaited<ReturnType<typeof loadPyodide>> | null = null;
+interface PythonWorkerGlobalScope {
+  location: Location;
+  postMessage(message: unknown): void;
+  addEventListener(type: 'message', listener: (event: MessageEvent<WorkerMessage>) => void): void;
+}
+
+const workerScope = self as unknown as PythonWorkerGlobalScope;
+let runtime: PyodideRuntime | null = null;
 let pythonInputAdapter: ReturnType<NonNullable<typeof runtime>['runPython']> | null = null;
 let inputControl: Int32Array | null = null;
 let inputData: Uint8Array | null = null;
@@ -68,6 +75,8 @@ async function initialize(message: InitializeMessage): Promise<void> {
   interruptView = new Int32Array(message.interruptBuffer);
 
   send({ type: 'stage', stage: 'runtime' });
+  const pyodideModuleUrl = new URL('/pyodide/pyodide.mjs', workerScope.location.href);
+  const { loadPyodide } = await import(/* @vite-ignore */ pyodideModuleUrl.href) as PyodideModule;
   runtime = await loadPyodide({ indexURL: new URL('/pyodide/', workerScope.location.href).href });
   runtime.setStdout({ batched: (text) => send({ type: 'output', channel: 'stdout', text }) });
   runtime.setStderr({ batched: (text) => send({ type: 'output', channel: 'stderr', text }) });

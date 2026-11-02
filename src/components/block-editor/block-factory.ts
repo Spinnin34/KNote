@@ -1,5 +1,7 @@
 import { calloutGlyph, EMPTY_TABLE } from '@/components/block-editor/content';
 
+export function blankElement(tag: 'p'): HTMLParagraphElement;
+export function blankElement(tag: string): HTMLElement;
 export function blankElement(tag: string): HTMLElement {
   const element = document.createElement(tag);
   element.append(document.createElement('br'));

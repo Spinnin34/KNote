@@ -168,6 +168,60 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 }
 .knote-sidebar-footer [data-balsa="badge"] { margin-left: auto; }
 
+.knote-account {
+  margin: .5rem .35rem .15rem;
+}
+.knote-account-card {
+  display: flex;
+  flex-direction: column;
+  gap: .48rem;
+  width: 100%;
+}
+.knote-account-label {
+  margin: 0;
+  color: var(--balsa-role-secondary);
+  font-size: .61rem;
+  font-weight: 600;
+  letter-spacing: .045em;
+}
+.knote-account-identity {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: .55rem;
+}
+.knote-account-avatar { border-color: var(--balsa-role-border); }
+.knote-account-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: .12rem;
+}
+.knote-account-copy strong {
+  overflow: hidden;
+  color: var(--balsa-role-foreground);
+  font-size: .74rem;
+  font-weight: 580;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.knote-account-copy small {
+  overflow: hidden;
+  color: var(--balsa-role-secondary);
+  font-size: .65rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.knote-account-login { width: 100%; }
+.knote-account-message {
+  margin: 0;
+  color: var(--balsa-role-secondary);
+  font-size: .63rem;
+  line-height: 1.45;
+}
+.knote-account-message--error { color: var(--balsa-role-destructive); }
+
 .knote-main { min-width: 0; min-height: 100dvh; margin-left: 0; }
 .knote-shell [data-balsa="button"][data-size]:not([data-shape="fab"]) { --balsa-inset-icon: var(--balsa-inset); padding-inline: var(--balsa-inset); }
 .knote-shell [data-balsa="dropdown-menu"] > button { gap: .45rem; padding-inline: .58rem; white-space: nowrap; }

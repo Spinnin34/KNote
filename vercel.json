@@ -1,5 +1,23 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "rewrites": [
+    {
+      "source": "/auth/callback",
+      "destination": "/api/auth/callback"
+    },
+    {
+      "source": "/auth/session",
+      "destination": "/api/auth/session"
+    },
+    {
+      "source": "/auth/logout",
+      "destination": "/api/auth/logout"
+    },
+    {
+      "source": "/auth/login",
+      "destination": "/api/auth/login"
+    }
+  ],
   "headers": [
     {
       "source": "/(.*)",
@@ -10,7 +28,7 @@
         },
         {
           "key": "Cross-Origin-Embedder-Policy",
-          "value": "require-corp"
+          "value": "credentialless"
         }
       ]
     }

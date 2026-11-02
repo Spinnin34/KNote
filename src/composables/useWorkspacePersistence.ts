@@ -18,7 +18,7 @@ interface WorkspacePersistenceOptions {
 }
 
 export function useWorkspacePersistence(options: WorkspacePersistenceOptions) {
-  const { pages, todayTasks, preferences, databaseViewStates, snapshot, notify } = options;
+  const { pages, todayTasks, databaseViewStates, snapshot, notify } = options;
   const bannerFiles = ref<readonly File[]>([]);
   const bannerObjectUrls = ref<Record<string, string>>({});
   const saveState = ref<'saved' | 'saving' | 'error'>(isDesktopRuntime() && !isDesktopVaultReady() ? 'error' : 'saved');

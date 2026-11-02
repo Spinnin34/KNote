@@ -238,6 +238,7 @@ pub fn run() {
                 connection: Mutex::new(connection),
                 unavailable_reason,
             });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

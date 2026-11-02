@@ -7,7 +7,7 @@ import Drawer from "./Drawer.vue";
 import { roundedClasses, type Rounded } from "./form";
 import type { Shadow, ThemeInput } from "./theme";
 import { useResolvedThemeProps } from "./theme-context";
-import Icon, { type IconComponent } from "./Icon.vue";
+import type { IconComponent } from "./Icon.vue";
 import SidebarTree from "../SidebarTree.vue";
 
 export interface SidebarItem {

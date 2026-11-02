@@ -1,10 +1,14 @@
 import { BOARD_STATUSES, DATABASE_VIEWS_STORAGE_KEY, DEFAULT_DATABASE_PROPERTIES, PAGE_STORAGE_KEY, PREFERENCES_STORAGE_KEY, TASK_PRIORITIES, TASK_STORAGE_KEY, defaultPreferences } from '@/domain/workspace/constants';
 import { pageIconOptions } from '@/domain/workspace/page-icons';
 import { samplePages, sampleTodayTasks } from '@/domain/workspace/samples';
-import type { BoardStatus, DatabaseFilter, DatabaseProperty, DatabaseSort, DatabaseViewState, PageEntry, PageSubtask, PageType, TodayTask, WorkspacePage, WorkspacePreferences } from '@/domain/workspace/types';
+import type { BoardStatus, DatabaseFilter, DatabaseProperty, DatabaseSort, DatabaseViewState, PageEntry, PageSubtask, PageType, TaskPriority, TodayTask, WorkspacePage, WorkspacePreferences } from '@/domain/workspace/types';
 import { getInitialWorkspaceValue, isDesktopRuntime } from '@/lib/desktop-vault';
 import { makeId } from '@/domain/workspace/ids';
 const now = Date.now();
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
 function readStoredValue<T>(desktopKey: 'pages' | 'todayTasks' | 'preferences' | 'databaseViewStates', browserKey: string): T | null {
   if (isDesktopRuntime()) return (getInitialWorkspaceValue(desktopKey) as T | undefined) ?? null;
   try {
@@ -66,9 +70,12 @@ function cloneSamplePage(page: WorkspacePage): WorkspacePage {
 }
 export function normalizePages(stored: unknown): WorkspacePage[] {
   if (!Array.isArray(stored)) return samplePages.map(cloneSamplePage);
-  const normalized = stored.filter((page) => page && typeof page.title === 'string').map((page) => {
-    const type: PageType = ['folder', 'doc', 'code', 'board', 'database', 'calendar', 'tasks'].includes(page.type) ? page.type : 'doc';
-    const entries = Array.isArray(page.entries) ? page.entries.map(normalizeEntry).filter((entry): entry is PageEntry => Boolean(entry)) : [];
+  const supportedTypes: readonly PageType[] = ['folder', 'doc', 'code', 'board', 'database', 'calendar', 'tasks'];
+  const normalized = stored.filter((page: unknown): page is Record<string, unknown> => isRecord(page) && typeof page.title === 'string').map((page) => {
+    const type = typeof page.type === 'string' && supportedTypes.includes(page.type as PageType) ? page.type as PageType : 'doc';
+    const entries: PageEntry[] = Array.isArray(page.entries)
+      ? page.entries.map((entry: unknown) => normalizeEntry(entry)).filter((entry): entry is PageEntry => Boolean(entry))
+      : [];
     if (page.id === 'page-reading') {
       const legacyFormats: Record<string, string> = { 'reading-1': 'Libro', 'reading-2': 'Artículo', 'reading-3': 'Ensayo' };
       entries.forEach((entry) => {
@@ -81,10 +88,10 @@ export function normalizePages(stored: unknown): WorkspacePage[] {
       });
     }
     return {
-      id: typeof page.id === 'string' ? page.id : makeId(), title: page.title, type,
+      id: typeof page.id === 'string' ? page.id : makeId(), title: String(page.title), type,
       parentId: typeof page.parentId === 'string' ? page.parentId : null,
       content: typeof page.content === 'string' ? page.content : '', favorite: Boolean(page.favorite),
-      icon: pageIconOptions.some((option) => option.id === page.icon) ? page.icon : undefined,
+      icon: pageIconOptions.some((option) => option.id === page.icon) ? page.icon as string : undefined,
       iconColor: typeof page.iconColor === 'string' && /^#[\da-f]{6}$/i.test(page.iconColor) ? page.iconColor.toLowerCase() : undefined,
       banner: typeof page.banner === 'string' && (
         /^data:image\/(?:webp|jpeg|png);base64,[\da-z+/=]+$/i.test(page.banner) && page.banner.length <= 1300000

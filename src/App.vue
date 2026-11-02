@@ -1,14 +1,13 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import type { LucideIcon } from '@lucide/vue';
 import {
-  Activity, AlignLeft, AlarmClock, Archive, ArrowRight, ArrowUpDown, ArrowUpRight, Atom, Award, Bell, BookMarked, BookOpen, Bot, BriefcaseBusiness, Building2, CalendarDays, Camera, ChartNoAxesCombined, Check, CheckCheck, ChefHat,
-  ChevronDown, ChevronRight, CircleAlert, CircleCheck, CircleDashed, CircleDot, CircleHelp, ClipboardList, Cloud, Code2, Coffee, Compass, Cpu, Crown,
-  Database, Diamond, Dumbbell, Earth, Eye, FileCode, FileImage, FileText, Fingerprint, Flag, Flame, FlaskConical, Folder, FolderOpen, Gamepad2, Gauge, Gem, GitBranch, Globe, Hammer, Handshake, HardDrive, Headphones, Heart, History, House, Inbox, KeyRound, Laptop, Layers, Leaf, LifeBuoy, Link2, LockKeyhole, Mail, Map as MapIcon, MapPin, Medal, Mic, Monitor, Moon, Mountain,
-  LayoutDashboard, Lightbulb, ListTodo, Link as LinkIcon, Menu, MessageCircle,
-  MoreHorizontal, Music2, Network, Newspaper, NotebookPen, Package, Paintbrush, Palette, Paperclip, Pencil, PenTool, Plane, Plug, Plus, Puzzle, Radio, Rocket, Scale, Scissors, Search, Send, Server, Settings, Settings2, ShieldCheck, ShoppingBag, SlidersHorizontal, Smartphone, Smile, Sparkles, Sprout, Star, StickyNote, Sun, Sword,
-  Table2, Tag, Target, Terminal, Ticket, Timer, Trash2, Trees, Trophy, UserRound, UsersRound, Video, Wallet, Waves, Workflow, Wrench, Zap, Filter, X,
+  ArrowUpRight, CalendarDays, CircleAlert, CircleDot, Code2, FileText, Flag, Folder, House, LayoutDashboard,
+  Link2, ListTodo, LogIn, LogOut, Menu, MessageCircle, MoreHorizontal, NotebookPen, Paperclip, Plus, Search, Settings2,
+  Star, Table2, Tag, Trash2, X,
 } from '@lucide/vue';
+import Avatar from '@/components/ui/Avatar.vue';
 import Badge from '@/components/ui/Badge.vue';
 import Breadcrumb from '@/components/ui/Breadcrumb.vue';
 import Button from '@/components/ui/Button.vue';
@@ -21,13 +20,9 @@ import DatePicker from '@/components/ui/DatePicker.vue';
 import Icon from '@/components/ui/Icon.vue';
 import Input from '@/components/ui/Input.vue';
 import Link from '@/components/ui/Link.vue';
-import Modal from '@/components/ui/Modal.vue';
 import Progress from '@/components/ui/Progress.vue';
 import Select from '@/components/ui/Select.vue';
-import Separator from '@/components/ui/Separator.vue';
 import Sidebar from '@/components/ui/Sidebar.vue';
-import Table from '@/components/ui/Table.vue';
-import Tabs from '@/components/ui/Tabs.vue';
 import ToastViewport, { type ToastItem } from '@/components/ui/ToastViewport.vue';
 import Attachment from '@/components/ui/Attachment.vue';
 import PageIconPicker from '@/components/PageIconPicker.vue';
@@ -40,17 +35,19 @@ import DeleteEntryDialog from '@/components/workspace/DeleteEntryDialog.vue';
 import DatabaseWorkspace from '@/components/workspace/DatabaseWorkspace.vue';
 import type { CalendarModelValue } from '@/components/ui/Calendar.vue';
 import type { MenuItem, MenuSelection } from '@/components/ui/menu';
+import type { NavigationLink } from '@/components/ui/navigation';
 import type { SidebarGroup } from '@/components/ui/Sidebar.vue';
 import { deleteBlockImage, saveBlockImage } from '@/lib/block-images';
 import { getDesktopVaultError, isDesktopRuntime } from '@/lib/desktop-vault';
 import type { WorkspaceSnapshot } from '@/lib/desktop-vault';
 import type { PreparedWorkspaceTransfer } from '@/lib/workspace-transfer';
-import type { BoardStatus, CanvasWidth, DatabaseFilter, DatabaseProperty, DatabaseSort, DatabaseViewState, GlassStrength, PageEntry, PageSubtask, PageType, ReadingDensity, TaskPriority, TodayTask, WorkspacePage, WorkspacePreferences } from '@/domain/workspace/types';
-import { BOARD_STATUSES, DEFAULT_DATABASE_PROPERTIES, defaultPreferences, PREFERENCES_STORAGE_KEY, priorityCellOptions, priorityOptions, statusOptions, TASK_PRIORITIES, widthOptions } from '@/domain/workspace/constants';
+import type { BoardStatus, DatabaseViewState, PageEntry, PageType, TaskPriority, TodayTask, WorkspacePage, WorkspacePreferences } from '@/domain/workspace/types';
+import { defaultPreferences, PREFERENCES_STORAGE_KEY, priorityOptions, statusOptions } from '@/domain/workspace/constants';
 import { pageIconOptions } from '@/domain/workspace/page-icons';
 import { entryTags, normalizeDatabaseViewStates, normalizePages, normalizePreferences, normalizeTodayTasks, readPages, readPreferences, readTodayTasks, readDatabaseViewStates } from '@/domain/workspace/normalizers';
 import { useWorkspacePersistence } from '@/composables/useWorkspacePersistence';
 import { useDatabaseWorkspace } from '@/composables/useDatabaseWorkspace';
+import { useKarmancosAuth } from '@/composables/useKarmancosAuth';
 import { makeId } from '@/domain/workspace/ids';
 
 const BlockEditor = defineAsyncComponent({ loader: () => import('@/components/BlockEditor.vue'), delay: 120, timeout: 15000 });
@@ -115,14 +112,30 @@ let toastCounter = 0;
 let removeDesktopCloseListener: (() => void) | undefined;
 let desktopCloseInProgress = false;
 let sidebarCloseTimer: number | undefined;
+const {
+  configured: karmancosConfigured,
+  status: karmancosAuthStatus,
+  profile: karmancosProfile,
+  errorMessage: karmancosAuthError,
+  initialize: initializeKarmancosAuth,
+  signIn: signInWithKarmancos,
+  signOut: signOutFromKarmancos,
+} = useKarmancosAuth();
 
 const activePage = computed(() => pages.value.find((page) => page.id === selectedId.value) ?? null);
+const karmancosDisplayName = computed(() => {
+  const profile = karmancosProfile.value;
+  if (!profile) return 'Nombre no disponible';
+  const nameFromParts = [profile.givenName, profile.familyName].filter((part): part is string => Boolean(part)).join(' ');
+  return nameFromParts || profile.fullName || 'Nombre no disponible';
+});
 const appPreferencesStyle = computed(() => ({
   '--knote-glass-alpha': preferences.value.glass === 'soft' ? '50%' : preferences.value.glass === 'deep' ? '84%' : '68%',
   '--knote-glass-blur': preferences.value.glass === 'soft' ? '12px' : preferences.value.glass === 'deep' ? '30px' : '20px',
   '--knote-canvas-width': preferences.value.width === 'compact' ? '48rem' : preferences.value.width === 'wide' ? '72rem' : '56rem',
 }));
 const sortedPages = computed(() => [...pages.value].sort((left, right) => right.updatedAt - left.updatedAt));
+const agendaPage = computed(() => sortedPages.value.find((page) => page.type === 'calendar') ?? null);
 const recentPages = computed(() => {
   const seenTitles = new Set<string>();
   return sortedPages.value.filter((page) => {
@@ -133,6 +146,15 @@ const recentPages = computed(() => {
     return true;
   }).slice(0, 7);
 });
+const recentFolder = computed(() => {
+  for (const page of recentPages.value) {
+    const folder = pages.value.find((candidate) => candidate.id === page.parentId && candidate.type === 'folder');
+    if (folder) return folder;
+  }
+  return null;
+});
+const meetingsFolder = computed(() => pages.value.find((page) => page.type === 'folder'
+  && page.title.trim().toLocaleLowerCase('es') === 'reuniones') ?? null);
 const homeTasksRemaining = computed(() => todayTasks.value.filter((task) => !task.done).length);
 const pageCount = computed(() => pages.value.filter((page) => page.type !== 'folder').length);
 const favoriteCount = computed(() => pages.value.filter((page) => page.favorite).length);
@@ -146,7 +168,11 @@ const selectedDateLabel = computed(() => selectedDate.value instanceof Date
   ? new Intl.DateTimeFormat('es-ES', { weekday: 'long', day: 'numeric', month: 'long' }).format(selectedDate.value)
   : 'Próximas fechas');
 const entryDialogTitle = computed(() => entryEditingId.value ? 'Editar elemento' : activePage.value?.type === 'calendar' ? 'Añadir evento' : activePage.value?.type === 'tasks' ? 'Añadir paso' : 'Añadir elemento');
-const focusProject = computed(() => pages.value.find((page) => page.id === 'page-abyss-ideas') ?? null);
+const focusProject = computed(() => sortedPages.value.find((page) =>
+  (page.type === 'board' || page.type === 'database') && page.entries.some((entry) => entry.status !== 'Hecho'),
+) ?? sortedPages.value.find((page) =>
+  (page.type === 'board' || page.type === 'database') && page.entries.length > 0,
+) ?? null);
 const projectCompletion = computed(() => {
   const entries = focusProject.value?.entries ?? [];
   return entries.length ? Math.round(entries.filter((entry) => entry.status === 'Hecho').length / entries.length * 100) : 0;
@@ -154,10 +180,10 @@ const projectCompletion = computed(() => {
 function pageTypeLabel(type: PageType): string {
   return { folder: 'Carpeta', doc: 'Documento', code: 'Código', board: 'Tablero', database: 'Tabla', calendar: 'Calendario', tasks: 'Lista de tareas' }[type];
 }
-function pageTypeIcon(type: PageType) {
+function pageTypeIcon(type: PageType): LucideIcon {
   return { folder: Folder, doc: FileText, code: Code2, board: LayoutDashboard, database: Table2, calendar: CalendarDays, tasks: ListTodo }[type];
 }
-function pageIcon(page: WorkspacePage) {
+function pageIcon(page: WorkspacePage): LucideIcon {
   return pageIconOptions.find((option) => option.id === page.icon)?.icon ?? pageTypeIcon(page.type);
 }
 function pageIconColor(page: WorkspacePage): string {
@@ -166,7 +192,7 @@ function pageIconColor(page: WorkspacePage): string {
 function pageIconStyle(page: WorkspacePage): Record<string, string> {
   return { '--knote-page-icon-color': pageIconColor(page) };
 }
-function entryIcon(entry: PageEntry) {
+function entryIcon(entry: PageEntry): LucideIcon {
   return pageIconOptions.find((option) => option.id === entry.icon)?.icon ?? FileText;
 }
 function entryIconStyle(entry: PageEntry): Record<string, string> {
@@ -205,11 +231,15 @@ const sidebarGroups = computed<readonly SidebarGroup[]>(() => {
     id: page.id, label: page.title || 'Sin título', icon: pageIcon(page), iconColor: page.iconColor,
     ...(page.favorite ? { badge: '★' } : {}),
   }));
+  const meetingItems = meetingsFolder.value
+    ? [{ id: meetingsFolder.value.id, label: meetingsFolder.value.title, icon: pageIcon(meetingsFolder.value) }]
+    : agendaPage.value
+      ? [{ id: agendaPage.value.id, label: agendaPage.value.title || 'Ver agenda', icon: pageIcon(agendaPage.value) }]
+      : [{ id: 'meetings-empty', label: 'No hay calendarios', icon: CalendarDays, disabled: true }];
   return [
     { id: 'meetings', label: 'Reuniones', items: [
-      { id: 'meetings-empty', label: 'No hay eventos próximos', icon: CalendarDays, disabled: true },
+      ...meetingItems,
       { id: 'create-meeting-note', label: 'Nueva nota de reunión', icon: Plus },
-      { id: 'page-agenda', label: 'Ver agenda', icon: ArrowUpRight },
     ] },
     { id: 'recents', label: 'Recientes', items: recentItems },
     { id: 'private', label: 'Privado', items: sidebarItemsFor(null) },
@@ -221,7 +251,7 @@ const breadcrumbItems = computed(() => {
   let cursor: WorkspacePage | undefined = activePage.value;
   while (cursor) {
     ancestors.unshift(cursor);
-    const parentId = cursor.parentId;
+    const parentId: string | null = cursor.parentId;
     cursor = parentId ? pages.value.find((page) => page.id === parentId) : undefined;
   }
   return [
@@ -331,14 +361,19 @@ function handleSidebarPointerLeave(): void {
 }
 function handleSidebarFocusOut(): void { scheduleSidebarClose(true); }
 function onSidebarSelect(item: { id: string }): void {
-  if (item.id === 'create-meeting-note') { openCreatePage('doc', 'folder-reuniones'); return; }
+  if (item.id === 'create-meeting-note') { openCreatePage('doc', meetingsFolder.value?.id ?? null); return; }
   if (item.id === 'meetings-empty') return;
   setActive(item.id);
 }
+function openMeetings(): void {
+  const destination = meetingsFolder.value ?? agendaPage.value;
+  if (destination) setActive(destination.id);
+  else openCreatePage('calendar', null);
+}
 function goHome(): void { setActive('home'); }
-function goBreadcrumb(item: { href?: string }, event: MouseEvent): void {
+function goBreadcrumb(item: NavigationLink, event: MouseEvent): void {
   event.preventDefault();
-  setActive(item.href?.slice(1) || 'home');
+  setActive(item.link.slice(1) || 'home');
 }
 function openCreatePage(type: PageType = 'doc', parentId: string | null = activePage.value?.type === 'folder' ? activePage.value.id : activePage.value?.parentId ?? null): void {
   createType.value = type;
@@ -414,15 +449,17 @@ function captureQuickNote(): void {
   const content = quickCapture.value.trim();
   if (!content) return;
   const timestamp = Date.now();
+  const personalFolder = pages.value.find((page) => page.type === 'folder'
+    && page.title.trim().toLocaleLowerCase('es') === 'personal');
   const page: WorkspacePage = {
     id: makeId(), title: content.length > 48 ? content.slice(0, 47).trimEnd() + '…' : content,
-    type: 'doc', parentId: pages.value.some((page) => page.id === 'folder-personal' && page.type === 'folder') ? 'folder-personal' : null, content: content.length > 48 ? content : '',
+    type: 'doc', parentId: personalFolder?.id ?? null, content: content.length > 48 ? content : '',
     favorite: false, createdAt: timestamp, updatedAt: timestamp, entries: [],
   };
   pages.value.unshift(page);
   quickCapture.value = '';
   persist();
-  notify('Idea guardada', 'Se añadió a Personal y quedó lista para seguir editando.');
+  notify('Idea guardada', personalFolder ? `Se añadió a ${personalFolder.title} y quedó lista para seguir editando.` : 'Se añadió a tu espacio y quedó lista para seguir editando.');
 }
 function toggleFavorite(page: WorkspacePage): void {
   page.favorite = !page.favorite;
@@ -596,7 +633,12 @@ function onCommandSelect(item: { id: string }): void {
     openCreatePage(type);
   }
 }
-function todayTaskChanged(): void { queueSave(); }
+function todayTaskChanged(id: string, done: boolean): void {
+  const task = todayTasks.value.find((item) => item.id === id);
+  if (!task) return;
+  task.done = done;
+  queueSave();
+}
 function removeToast(item: ToastItem): void { toasts.value = toasts.value.filter((toast) => toast.id !== item.id); }
 function onGlobalKeydown(event: KeyboardEvent): void {
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'n') { event.preventDefault(); openCreatePage(); }
@@ -618,6 +660,7 @@ watch(databaseViewStates, (value) => {
 }, { deep: true });
 watch(() => pages.value.map((page) => `${page.id}:${page.banner || ''}`).join('|'), () => { void hydratePageBanners(); });
 onMounted(() => {
+  void initializeKarmancosAuth();
   window.addEventListener('keydown', onGlobalKeydown);
   window.addEventListener('popstate', syncPageFromHistory);
   window.addEventListener('pagehide', flushPendingChanges);
@@ -692,7 +735,7 @@ onBeforeUnmount(() => {
         <div class="knote-sidebar-header">
           <div class="knote-side-shortcuts">
             <Button variant="soft" color="neutral" size="sm" :prefix-icon="House" @click="goHome">Inicio</Button>
-            <Button variant="soft" color="neutral" size="sm" :prefix-icon="MessageCircle" aria-label="Reuniones" title="Abrir reuniones" @click="setActive('folder-reuniones')" />
+            <Button variant="soft" color="neutral" size="sm" :prefix-icon="MessageCircle" aria-label="Reuniones" title="Abrir reuniones" @click="openMeetings" />
             <Button variant="soft" color="neutral" size="sm" :prefix-icon="NotebookPen" aria-label="Notas" title="Notas" @click="openCreatePage('doc')" />
             <Button variant="soft" color="neutral" size="sm" :prefix-icon="Search" aria-label="Buscar" title="Buscar" @click="commandOpen = true" />
           </div>
@@ -705,6 +748,48 @@ onBeforeUnmount(() => {
           <Button variant="soft" color="neutral" size="sm" :prefix-icon="Plus" aria-label="Crear una página" title="Crear una página" @click="openCreatePage()" />
           <Button variant="glass" color="neutral" size="sm" :prefix-icon="Settings2" aria-label="Personalizar espacio" title="Personalizar espacio" @click="preferencesOpen = true" />
         </div>
+        <section v-if="!isDesktopRuntime()" class="knote-account" aria-label="Cuenta de Karmancos ID" aria-live="polite">
+          <Card variant="glass" color="neutral" size="sm" padding="sm" class="knote-account-card">
+            <p class="knote-account-label">Cuenta Karmancos ID</p>
+            <div class="knote-account-identity">
+              <Avatar
+                :src="karmancosProfile?.picture ?? undefined"
+                :label="karmancosProfile?.fullName ?? karmancosProfile?.username ?? 'Cuenta de Karmancos ID'"
+                size="md"
+                loading="eager"
+                class="knote-account-avatar"
+              />
+              <span class="knote-account-copy">
+                <strong>{{ karmancosProfile ? (karmancosProfile.username ? '@' + karmancosProfile.username : 'Cuenta conectada') : 'Tu cuenta' }}</strong>
+                <small v-if="karmancosProfile">{{ karmancosDisplayName }}</small>
+                <small v-else>{{ karmancosConfigured ? 'Inicia sesión para mostrar tu perfil' : 'Acceso pendiente de configuración' }}</small>
+              </span>
+              <Button
+                v-if="karmancosProfile"
+                variant="glass"
+                color="neutral"
+                size="sm"
+                :prefix-icon="LogOut"
+                aria-label="Cerrar sesión de KNote"
+                title="Cerrar sesión de KNote"
+                @click="signOutFromKarmancos"
+              />
+            </div>
+            <Button
+              v-if="!karmancosProfile"
+              variant="soft"
+              color="neutral"
+              size="sm"
+              :prefix-icon="LogIn"
+              :loading="karmancosAuthStatus === 'signing-in'"
+              :disabled="!karmancosConfigured || karmancosAuthStatus === 'loading' || karmancosAuthStatus === 'signing-in'"
+              class="knote-account-login"
+              @click="signInWithKarmancos"
+            >Iniciar sesión</Button>
+            <p v-if="karmancosAuthError" class="knote-account-message knote-account-message--error" role="alert">{{ karmancosAuthError }}</p>
+            <p v-else-if="!karmancosConfigured" class="knote-account-message" role="status">El acceso web requiere configurar Karmancos ID en el servidor.</p>
+          </Card>
+        </section>
       </template>
     </Sidebar>
 
@@ -738,6 +823,7 @@ onBeforeUnmount(() => {
           :today-done-count="todayDoneCount"
           :today-tasks="todayTasks"
           :recent-pages="recentPages"
+          :recent-folder="recentFolder"
           :focus-project="focusProject"
           :project-completion="projectCompletion"
           :page-icon="pageIcon"
@@ -790,7 +876,7 @@ onBeforeUnmount(() => {
               <PageIconPicker :id="'page-icon-' + activePage.id" :label="'Personalizar icono de ' + activePage.title" :icon="pageIcon(activePage)" :icon-id="activePage.icon" :options="pageIconOptions" :color="activePage.iconColor" @update:icon-id="setPageIcon" @update:color="setPageIconColor" />
             </div>
             <Badge variant="outline" color="secondary" size="sm">PYTHON</Badge>
-            <Input :id="'title-' + activePage.id" v-model="activePage.title" label="Título de la página" placeholder="Python" size="lg" variant="surface" class="knote-title-field" @update:model-value="touchPage(activePage)" />
+            <Input :id="'title-' + activePage.id" v-model="activePage.title" label="Título de la página" placeholder="Python" size="md" variant="surface" class="knote-title-field" @update:model-value="touchPage(activePage)" />
           </header>
           <CodeWorkspace :key="activePage.id + '-python-editor'" v-model="activePage.content" :page-id="activePage.id" :page-title="activePage.title" @update:model-value="touchPage(activePage)" />
         </template>
@@ -811,7 +897,7 @@ onBeforeUnmount(() => {
               <PageIconPicker :id="'page-icon-' + activePage.id" :label="'Personalizar icono de ' + activePage.title" :icon="pageIcon(activePage)" :icon-id="activePage.icon" :options="pageIconOptions" :color="activePage.iconColor" @update:icon-id="setPageIcon" @update:color="setPageIconColor" />
             </div>
             <Badge variant="outline" color="secondary" size="sm">{{ pageTypeLabel(activePage.type).toUpperCase() }}</Badge>
-            <Input :id="'title-' + activePage.id" v-model="activePage.title" label="Título de la página" placeholder="Sin título" size="lg" variant="surface" class="knote-title-field" @update:model-value="touchPage(activePage)" />
+            <Input :id="'title-' + activePage.id" v-model="activePage.title" label="Título de la página" placeholder="Sin título" size="md" variant="surface" class="knote-title-field" @update:model-value="touchPage(activePage)" />
           </header>
 
           <template v-if="activePage.type === 'doc'">
@@ -827,7 +913,7 @@ onBeforeUnmount(() => {
                 <ul class="knote-today-list knote-page-task-list">
                   <li v-for="entry in activePage.entries" :key="entry.id">
                     <Icon :icon="entryIcon(entry)" size="sm" class="knote-task-list-icon" :style="entryIconStyle(entry)" aria-hidden="true" />
-                    <Checkbox :id="'entry-' + entry.id" :model-value="Boolean(entry.done)" :label="entry.title" size="sm" variant="surface" @update:model-value="(done) => entryDoneChanged(activePage, entry, done)" />
+                    <Checkbox :id="'entry-' + entry.id" :model-value="Boolean(entry.done)" :label="entry.title" size="sm" variant="surface" @update:model-value="(done) => entryDoneChanged(activePage!, entry, done)" />
                     <Badge v-if="entry.tag" variant="outline" color="secondary" size="sm">{{ entry.tag }}</Badge>
                     <Button variant="soft" color="neutral" size="sm" shape="fab" :prefix-icon="ArrowUpRight" :aria-label="'Editar ' + entry.title" :title="'Editar ' + entry.title" @click="openEntryDetails(activePage, entry)" />
                   </li>
@@ -924,7 +1010,7 @@ onBeforeUnmount(() => {
           <div ref="entryInspectorScroll" class="knote-entry-inspector-scroll">
             <div class="knote-entry-detail-title-row">
               <PageIconPicker :id="'entry-icon-' + detailEntry.id" :label="'Personalizar icono de ' + detailEntry.title" :icon="entryIcon(detailEntry)" :icon-id="detailEntry.icon" :options="pageIconOptions" :color="detailEntry.iconColor" subject="tarea" class="knote-entry-icon-picker" @update:icon-id="setDetailEntryIcon" @update:color="setDetailEntryIconColor" />
-              <Input id="entry-detail-title" :model-value="detailEntry.title" label="Título de la tarea" placeholder="Sin título" size="lg" variant="surface" class="knote-entry-inspector-title" @update:model-value="updateDetailTitle" />
+              <Input id="entry-detail-title" :model-value="detailEntry.title" label="Título de la tarea" placeholder="Sin título" size="md" variant="surface" class="knote-entry-inspector-title" @update:model-value="updateDetailTitle" />
             </div>
 
             <section class="knote-inspector-section">

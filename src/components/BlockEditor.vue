@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import { createApp, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import {
-  AlertTriangle, Archive, Bell, Bold, BookOpen, CheckCircle, ChevronDown, Code2, Columns3, Compass, Copy,
-  FileText, FlaskConical, GripVertical, Heart, Highlighter, Image as ImageIcon, Info, Italic, Lightbulb,
-  Link2, List, ListOrdered, ListTodo, LockKeyhole, MessageCircle, Minus, Paperclip, Pin, Plus, Quote, Rocket,
-  Settings, Sigma, Strikethrough, Table as TableIcon, Tag, Target, Trash2, Type, Underline, X,
+  Bold, ChevronDown, Code2, Columns3, Copy, GripVertical, Highlighter, Image as ImageIcon, Italic,
+  Link2, List, ListOrdered, ListTodo, Minus, Plus, Quote, Sigma, Strikethrough, Table as TableIcon,
+  Trash2, Type, Underline, X,
 } from '@lucide/vue';
 import Button from '@/components/ui/Button.vue';
 import CommandMenu from '@/components/ui/CommandMenu.vue';
@@ -177,6 +176,7 @@ function directBlock(node: Node | null): HTMLElement | null {
     // manager for every line and made dragging/deleting a list unpredictable.
     if (element instanceof HTMLLIElement && element.parentElement
       && ['UL', 'OL'].includes(element.parentElement.tagName)) return element.parentElement;
+    if (element.tagName === 'P' && isBlankParagraph(element)) return null;
     if (['P', 'H1', 'H2', 'H3', 'H4', 'UL', 'OL', 'BLOCKQUOTE', 'PRE', 'HR', 'DETAILS', 'FIGURE'].includes(element.tagName)) return element;
     if (element instanceof HTMLDivElement && (element.classList.contains('knote-table-block') || element.classList.contains('knote-preview-columns') || element.classList.contains('knote-equation'))) return element;
     if (element.parentElement === root && element.tagName !== 'DIV') return element;
@@ -298,13 +298,16 @@ function handleEditorKeyup(): void {
   scheduleSelectionUpdate();
 }
 function isBlankParagraph(element: HTMLElement): boolean {
-  if (!['P', 'DIV'].includes(element.tagName) || element.textContent?.trim()) return false;
+  if (!['P', 'DIV'].includes(element.tagName) || hasVisibleEditorText(element.textContent)) return false;
   return Array.from(element.childNodes).every((node) =>
-    node.nodeName === 'BR' || (node.nodeType === Node.TEXT_NODE && !node.textContent?.trim()),
+    node.nodeName === 'BR' || (node.nodeType === Node.TEXT_NODE && !hasVisibleEditorText(node.textContent)),
   );
 }
+function hasVisibleEditorText(value: string | null | undefined): boolean {
+  return Boolean(value?.replace(/[\s\u00a0\u200b\ufeff]/g, ''));
+}
 function hasMeaningfulContent(root: HTMLElement): boolean {
-  if (root.innerText.trim()) return true;
+  if (hasVisibleEditorText(root.innerText)) return true;
   return Array.from(root.children).some((child) => !isBlankParagraph(child as HTMLElement));
 }
 function updateEditorPlaceholder(root: HTMLElement): void {
@@ -448,8 +451,14 @@ function emitDocument(normalize = true): void {
     || (activeCallout.value && !root.contains(activeCallout.value))
     || (activeImage.value && !root.contains(activeImage.value))) clearActiveComponentSettings();
   mountTableBlocks(root);
-  const hasContent = hasMeaningfulContent(root);
-  const html = hasContent ? sanitizeNodes(Array.from(root.childNodes)) : '';
+  const contentNodes = Array.from(root.childNodes).filter((node) =>
+    !(node instanceof HTMLElement && node.tagName === 'P' && isBlankParagraph(node))
+      && !(node.nodeType === Node.TEXT_NODE && !hasVisibleEditorText(node.textContent)),
+  );
+  const hasContent = contentNodes.some((node) => node instanceof HTMLElement
+    ? !(node.tagName === 'P' && isBlankParagraph(node))
+    : hasVisibleEditorText(node.textContent));
+  const html = hasContent ? sanitizeNodes(contentNodes) : '';
   updateEditorPlaceholder(root);
   lastModelValue = RICH_PREFIX + html;
   emit('update:modelValue', lastModelValue);
@@ -481,12 +490,15 @@ function requestImageInsertion(anchor: HTMLElement | null): void {
 }
 function insertImageFile(file: File): void {
   const root = rootElement();
-  if (!root || !file.type.startsWith('image/')) {
+  if (!root) return;
+  if (!file.type.startsWith('image/')) {
     imageError.value = 'Elige un archivo de imagen.';
+    imagePickerOpen.value = true;
     return;
   }
   if (file.size > 12 * 1024 * 1024) {
     imageError.value = 'La imagen supera el límite de 12 MB.';
+    imagePickerOpen.value = true;
     return;
   }
   void (async () => {
@@ -528,30 +540,42 @@ function insertImageFile(file: File): void {
       placeCaretAtEnd(trailingParagraph);
       emitDocument();
       scheduleSelectionUpdate();
-    } catch {
-      imageError.value = 'No se pudo guardar la imagen en este dispositivo.';
+    } catch (error) {
+      imagePickerOpen.value = true;
+      imageError.value = error instanceof Error ? `No se pudo insertar la imagen: ${error.message}` : 'No se pudo guardar la imagen en este dispositivo.';
     }
   })();
 }
 async function optimizeEditorImage(file: File): Promise<Blob> {
-  const bitmap = await createImageBitmap(file);
-  const scale = Math.min(1, 2400 / bitmap.width, 1800 / bitmap.height);
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-  const context = canvas.getContext('2d');
-  if (!context) { bitmap.close(); throw new Error('No se pudo preparar la imagen.'); }
-  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-  bitmap.close();
-  const encode = (quality: number) => new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('No se pudo comprimir la imagen.')), 'image/webp', quality);
-  });
-  let blob = await encode(.88);
-  if (blob.size > 4 * 1024 * 1024) blob = await encode(.8);
-  if (blob.size > 6 * 1024 * 1024) throw new Error('La imagen sigue siendo demasiado grande después de optimizarla.');
-  canvas.width = 1;
-  canvas.height = 1;
-  return blob;
+  // Keep animated GIFs intact; rasterizing them would silently discard animation.
+  if (file.type === 'image/gif') return file;
+  let bitmap: ImageBitmap | null = null;
+  let canvas: HTMLCanvasElement | null = null;
+  try {
+    if (typeof createImageBitmap !== 'function') throw new Error('Este navegador no puede procesar la imagen.');
+    bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, 2400 / bitmap.width, 1800 / bitmap.height);
+    canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('No se pudo preparar la imagen.');
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const encode = (quality: number) => new Promise<Blob>((resolve, reject) => {
+      canvas?.toBlob((blob) => blob ? resolve(blob) : reject(new Error('No se pudo comprimir la imagen.')), 'image/webp', quality);
+    });
+    const blob = await encode(.88);
+    if (blob.size <= 6 * 1024 * 1024) return blob;
+    const smaller = await encode(.72);
+    if (smaller.size <= 6 * 1024 * 1024) return smaller;
+    throw new Error('La imagen sigue siendo demasiado grande después de optimizarla.');
+  } catch (error) {
+    if (file.size <= 6 * 1024 * 1024) return file;
+    throw error;
+  } finally {
+    bitmap?.close();
+    if (canvas) { canvas.width = 1; canvas.height = 1; }
+  }
 }
 function handleImageSelection(files: readonly File[]): void {
   selectedImageFiles.value = files;
@@ -1011,6 +1035,10 @@ function handleBlockPointerUp(event: PointerEvent): void {
   finishBlockDrag();
 }
 function handleEditorDragOver(event: DragEvent): void {
+  if (Array.from(event.dataTransfer?.files ?? []).some((file) => file.type.startsWith('image/'))) {
+    event.preventDefault();
+    return;
+  }
   const dragged = draggedBlock.value;
   const target = dropTargetAtPointer(event.clientX, event.clientY);
   if (!dragged || !target || !canDropBlock(dragged, target)) return;
@@ -1030,6 +1058,14 @@ function finishBlockDrag(): void {
   draggedBlock.value = null;
 }
 function handleEditorDrop(event: DragEvent): void {
+  const image = Array.from(event.dataTransfer?.files ?? []).find((file) => file.type.startsWith('image/'));
+  if (image) {
+    event.preventDefault();
+    const target = document.elementFromPoint(event.clientX, event.clientY);
+    insertionAnchor.value = target ? directBlock(target) : null;
+    insertImageFile(image);
+    return;
+  }
   const dragged = draggedBlock.value;
   const target = dropTargetAtPointer(event.clientX, event.clientY);
   if (!dragged || !target || !canDropBlock(dragged, target)) { finishBlockDrag(); return; }
@@ -1613,6 +1649,54 @@ function insertAfterBlock(block: HTMLElement): HTMLElement {
   return paragraph;
 }
 function handleEditorKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Backspace') {
+    const root = rootElement();
+    const selection = window.getSelection();
+    if (!root || !selection?.rangeCount || !selection.getRangeAt(0).collapsed || !root.contains(selection.anchorNode)) return;
+    const anchor = selection.anchorNode instanceof HTMLElement ? selection.anchorNode : selection.anchorNode?.parentElement;
+    const adjacent = selection.anchorNode === root
+      ? root.childNodes.item(selection.anchorOffset) ?? root.childNodes.item(selection.anchorOffset - 1)
+      : null;
+    const adjacentList = adjacent instanceof HTMLElement && ['UL', 'OL'].includes(adjacent.tagName) ? adjacent : null;
+    const item = anchor?.closest('li') ?? adjacentList?.querySelector(':scope > li:last-child');
+    if (item instanceof HTMLLIElement && root.contains(item) && item.parentElement && ['UL', 'OL'].includes(item.parentElement.tagName)) {
+      const list = item.parentElement;
+      const hasNestedItems = Boolean(item.querySelector(':scope > ul li, :scope > ol li'));
+      const content = Array.from(item.childNodes).filter((node) => !(node instanceof HTMLInputElement) && node.nodeName !== 'BR' && !(node instanceof HTMLElement && ['UL', 'OL'].includes(node.tagName)));
+      const empty = !content.some((node) => hasVisibleEditorText(node.textContent)) && !hasNestedItems;
+      const range = selection.getRangeAt(0);
+      const atStart = range.startOffset === 0 || !hasVisibleEditorText(caretLineText(item, range, 'before'));
+      if (empty && atStart) {
+        event.preventDefault();
+        if (list.parentElement instanceof HTMLLIElement) {
+          changeListIndent(item, true);
+          return;
+        }
+        item.remove();
+        const paragraph = blankElement('p');
+        if (!list.querySelector(':scope > li')) list.replaceWith(paragraph);
+        else list.after(paragraph);
+        placeCaretAtEnd(paragraph);
+        emitDocument();
+        scheduleSelectionUpdate();
+        return;
+      }
+    }
+    const paragraph = anchor?.closest('p');
+    const previous = paragraph?.previousElementSibling;
+    if (paragraph instanceof HTMLElement && root.contains(paragraph) && isBlankParagraph(paragraph) && previous instanceof HTMLElement && ['UL', 'OL'].includes(previous.tagName)) {
+      const lastItem = previous.querySelector(':scope > li:last-child');
+      if (lastItem instanceof HTMLLIElement) {
+        event.preventDefault();
+        paragraph.remove();
+        placeCaretAtEnd(lastItem);
+        emitDocument();
+        scheduleSelectionUpdate();
+        return;
+      }
+    }
+    return;
+  }
   if (event.key === 'Enter') {
     const root = rootElement();
     const selection = window.getSelection();
@@ -1660,7 +1744,7 @@ function handleEditorKeydown(event: KeyboardEvent): void {
       event.preventDefault();
       const hasNestedItems = Boolean(item.querySelector(':scope > ul li, :scope > ol li'));
       const content = Array.from(item.childNodes).filter((node) => !(node instanceof HTMLInputElement) && node.nodeName !== 'BR' && !(node instanceof HTMLElement && ['UL', 'OL'].includes(node.tagName)));
-      const empty = !content.some((node) => node.textContent?.trim()) && !hasNestedItems;
+      const empty = !content.some((node) => hasVisibleEditorText(node.textContent)) && !hasNestedItems;
       if (empty) {
         const parentItem = list.parentElement instanceof HTMLLIElement ? list.parentElement : null;
         if (parentItem) {
@@ -1743,10 +1827,18 @@ function handleEditorKeydown(event: KeyboardEvent): void {
   }
   if (event.key === 'Escape') { selectionOpen.value = false; linkEditorOpen.value = false; }
 }
+function handleEditorBeforeInput(event: InputEvent): void {
+  if (event.inputType !== 'deleteContentBackward' || event.isComposing) return;
+  const fallback = new KeyboardEvent('keydown', { key: 'Backspace', cancelable: true });
+  handleEditorKeydown(fallback);
+  if (fallback.defaultPrevented) event.preventDefault();
+}
 function handlePaste(event: ClipboardEvent): void {
   const clipboard = event.clipboardData;
   if (!clipboard) return;
-  const pastedImage = Array.from(clipboard.files).find((file) => file.type.startsWith('image/'));
+  const pastedImage = Array.from(clipboard.files).find((file) => file.type.startsWith('image/'))
+    ?? Array.from(clipboard.items).find((item) => item.kind === 'file' && item.type.startsWith('image/'))?.getAsFile()
+    ?? null;
   if (pastedImage) {
     event.preventDefault();
     const selection = window.getSelection();
@@ -1913,6 +2005,7 @@ onBeforeUnmount(() => {
       :data-page-id="pageId"
       spellcheck="true"
       @input="handleEditorInput"
+      @beforeinput="handleEditorBeforeInput"
       @keydown="handleEditorKeydown"
       @focus="handleEditorFocus"
       @keyup="handleEditorKeyup"

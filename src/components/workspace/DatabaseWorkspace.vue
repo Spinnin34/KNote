@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { Component } from 'vue';
+import type { LucideIcon } from '@lucide/vue';
 import {
   AlignLeft, ArrowUpDown, CalendarDays, ChevronDown, ChevronRight, CircleCheck, CircleDashed, CircleDot,
   FileText, Filter, Plus, Search, SlidersHorizontal, StickyNote,
@@ -18,8 +18,9 @@ import Tabs from '@/components/ui/Tabs.vue';
 import type { CalendarModelValue } from '@/components/ui/Calendar.vue';
 import type { MenuItem, MenuSelection } from '@/components/ui/menu';
 import type { BoardStatus, DatabaseProperty, PageEntry, PageSubtask, WorkspacePage } from '@/domain/workspace/types';
+import { priorityCellOptions, statusOptions } from '@/domain/workspace/constants';
 
-type ViewTab = { id: string; label: string; icon?: Component };
+type ViewTab = { id: string; label: string; icon?: LucideIcon };
 type Props = {
   activePage: WorkspacePage;
   visibleBoardStatuses: readonly BoardStatus[];
@@ -37,7 +38,7 @@ type Props = {
   draggedEntryId: string | null;
   dropTargetEntryId: string | null;
   entriesForStatus: (page: WorkspacePage, status: BoardStatus) => PageEntry[];
-  entryIcon: (entry: PageEntry) => Component;
+  entryIcon: (entry: PageEntry) => LucideIcon;
   entryIconStyle: (entry: PageEntry) => Record<string, string>;
   entrySubtasks: (entry: PageEntry) => PageSubtask[];
   entryDescription: (entry: PageEntry) => string;

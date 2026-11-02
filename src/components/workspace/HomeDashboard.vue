@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { Component } from 'vue';
+import type { LucideIcon } from '@lucide/vue';
 import Badge from '@/components/ui/Badge.vue';
 import Button from '@/components/ui/Button.vue';
 import Card from '@/components/ui/Card.vue';
@@ -21,6 +21,7 @@ const {
   todayDoneCount,
   todayTasks,
   recentPages,
+  recentFolder,
   focusProject,
   projectCompletion,
   pageIcon,
@@ -36,9 +37,10 @@ const {
   todayDoneCount: number;
   todayTasks: TodayTask[];
   recentPages: WorkspacePage[];
+  recentFolder: WorkspacePage | null;
   focusProject: WorkspacePage | null;
   projectCompletion: number;
-  pageIcon: (page: WorkspacePage) => Component;
+  pageIcon: (page: WorkspacePage) => LucideIcon;
   pageIconStyle: (page: WorkspacePage) => Record<string, string>;
   pageTypeLabel: (type: PageType) => string;
   formatRelative: (timestamp: number) => string;
@@ -49,13 +51,13 @@ const emit = defineEmits<{
   'create-page': [];
   'select-page': [id: string];
   'capture-quick-note': [];
-  'today-task-changed': [];
+  'today-task-changed': [id: string, done: boolean];
 }>();
 
 function openCreatePage(): void { emit('create-page'); }
 function setActive(id: string): void { emit('select-page', id); }
 function captureQuickNote(): void { emit('capture-quick-note'); }
-function todayTaskChanged(): void { emit('today-task-changed'); }
+function todayTaskChanged(id: string, done: boolean): void { emit('today-task-changed', id, done); }
 </script>
 
 <template>
@@ -67,7 +69,7 @@ function todayTaskChanged(): void { emit('today-task-changed'); }
   <div class="knote-home-dashboard">
     <section class="knote-section knote-home-welcome">
       <div class="knote-section-heading">
-        <div><span class="knote-overline">{{ dateLabel }}</span><h2>{{ greeting }}, Ahmed.</h2></div>
+        <div><span class="knote-overline">{{ dateLabel }}</span><h2>{{ greeting }}</h2></div>
         <Button variant="soft" color="neutral" size="sm" :prefix-icon="Plus" @click="openCreatePage()">Nueva página</Button>
       </div>
     </section>
@@ -90,7 +92,7 @@ function todayTaskChanged(): void { emit('today-task-changed'); }
           <Card variant="glass" padding="sm" class="knote-glass-surface knote-list-card">
             <ul class="knote-today-list">
               <li v-for="task in todayTasks" :key="task.id">
-                <Checkbox :id="'today-' + task.id" v-model="task.done" :label="task.title" size="sm" variant="surface" @update:model-value="todayTaskChanged" />
+                <Checkbox :id="'today-' + task.id" :model-value="task.done" :label="task.title" size="sm" variant="surface" @update:model-value="(done) => todayTaskChanged(task.id, Boolean(done))" />
                 <Badge variant="soft" color="secondary" size="sm">{{ task.group }}</Badge>
               </li>
             </ul>
@@ -99,7 +101,7 @@ function todayTaskChanged(): void { emit('today-task-changed'); }
         <section class="knote-section">
           <div class="knote-section-heading knote-section-heading--compact">
             <div><span class="knote-overline">RETOMA EL HILO</span><h2>Recientes</h2></div>
-            <Link href="#folder-programacion" variant="text" size="sm" :suffix-icon="ArrowRight" @click.prevent="setActive('folder-programacion')">Programación</Link>
+            <Link v-if="recentFolder" :href="'#' + recentFolder.id" variant="text" size="sm" :suffix-icon="ArrowRight" @click.prevent="setActive(recentFolder.id)">{{ recentFolder.title }}</Link>
           </div>
           <Card variant="glass" padding="sm" class="knote-glass-surface knote-list-card">
             <ul class="knote-recent-list">
@@ -115,13 +117,13 @@ function todayTaskChanged(): void { emit('today-task-changed'); }
       <div class="knote-dashboard-secondary">
         <section v-if="focusProject" class="knote-section knote-focus-section">
           <div class="knote-section-heading knote-section-heading--compact">
-            <div><span class="knote-overline">EN MARCHA</span><h2>BiteCraft</h2></div>
+            <div><span class="knote-overline">EN MARCHA</span><h2>{{ focusProject.title }}</h2></div>
             <Badge variant="soft" color="info" size="sm">{{ focusProject.entries.filter((entry) => entry.status !== 'Hecho').length }} abiertas</Badge>
           </div>
           <Card variant="glass" padding="md" class="knote-focus-card">
-            <div class="knote-focus-topline"><span class="knote-focus-icon" :style="pageIconStyle(focusProject)"><Icon :icon="pageIcon(focusProject)" size="md" /></span><div><strong>Abyss Ideas</strong><small>Programación / BiteCraft</small></div><Badge variant="outline" color="secondary" size="sm">{{ projectCompletion }}%</Badge></div>
-            <Progress label="Ideas completadas" :value="projectCompletion" :show-value="false" color="info" size="sm" class="knote-project-progress" />
-            <div class="knote-focus-bottom"><span>Ideas del proyecto</span><Link href="#page-abyss-ideas" variant="text" size="sm" :suffix-icon="ArrowUpRight" @click.prevent="setActive(focusProject.id)">Abrir</Link></div>
+            <div class="knote-focus-topline"><span class="knote-focus-icon" :style="pageIconStyle(focusProject)"><Icon :icon="pageIcon(focusProject)" size="md" /></span><div><strong>{{ focusProject.title }}</strong><small>{{ pageTypeLabel(focusProject.type) }} · {{ focusProject.entries.length }} elementos</small></div><Badge variant="outline" color="secondary" size="sm">{{ projectCompletion }}%</Badge></div>
+            <Progress :label="focusProject.title + ' completadas'" :value="projectCompletion" :show-value="false" color="info" size="sm" class="knote-project-progress" />
+            <div class="knote-focus-bottom"><span>Progreso del proyecto</span><Link :href="'#' + focusProject.id" variant="text" size="sm" :suffix-icon="ArrowUpRight" @click.prevent="setActive(focusProject.id)">Abrir</Link></div>
           </Card>
         </section>
         <Card variant="glass" padding="sm" class="knote-quick-capture">

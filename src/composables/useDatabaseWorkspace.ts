@@ -3,7 +3,7 @@ import { LayoutDashboard, Table2 } from '@lucide/vue';
 import type { CalendarModelValue } from '@/components/ui/Calendar.vue';
 import type { MenuItem, MenuSelection } from '@/components/ui/menu';
 import type { ToastItem } from '@/components/ui/ToastViewport.vue';
-import type { BoardStatus, DatabaseViewState, PageEntry, PageSubtask, WorkspacePage } from '@/domain/workspace/types';
+import type { BoardStatus, DatabaseFilter, DatabaseProperty, DatabaseSort, DatabaseViewState, PageEntry, PageSubtask, TaskPriority, WorkspacePage } from '@/domain/workspace/types';
 import { BOARD_STATUSES, DEFAULT_DATABASE_PROPERTIES, TASK_PRIORITIES } from '@/domain/workspace/constants';
 import { entryTags } from '@/domain/workspace/normalizers';
 import { makeId } from '@/domain/workspace/ids';
@@ -275,14 +275,14 @@ function deleteDetailEntry(): void {
   touchPage(page);
   notify('Tarea eliminada', entry.title);
 }
-function updateDetailTitle(value: string): void {
+function updateDetailTitle(value: string | number): void {
   if (!detailEntry.value) return;
-  detailEntry.value.title = value;
+  detailEntry.value.title = String(value);
   touchDetailEntry();
 }
-function updateDetailDue(value: string): void {
+function updateDetailDue(value: string | number): void {
   if (!detailEntry.value) return;
-  detailEntry.value.due = value.trim() || undefined;
+  detailEntry.value.due = String(value).trim() || undefined;
   touchDetailEntry();
 }
 function detailDateValue(entry: PageEntry): CalendarModelValue {
@@ -351,10 +351,10 @@ function updateDetailContent(value: string): void {
 function touchDetailEntry(): void {
   if (detailPage.value) touchPage(detailPage.value);
 }
-function updateDetailTags(value: string): void {
-  detailTagsDraft.value = value;
+function updateDetailTags(value: string | number): void {
+  detailTagsDraft.value = String(value);
   if (!detailEntry.value) return;
-  detailEntry.value.tags = parseEntryTags(value);
+  detailEntry.value.tags = parseEntryTags(detailTagsDraft.value);
   detailEntry.value.tag = detailEntry.value.tags[0];
   touchDetailEntry();
 }

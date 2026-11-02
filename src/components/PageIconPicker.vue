@@ -35,7 +35,7 @@ function choose(id: string | undefined, close: (restoreFocus?: boolean) => void)
 <template>
   <Popup :id="props.id" v-model="open" :label="props.label" side="bottom" align="start" size="lg" variant="surface" rounded="xl" shadow="lg" class="knote-icon-popup">
     <template #trigger>
-      <Icon class="knote-icon-trigger" :icon="props.icon" size="xl" :stroke-width="1.7" :style="{ color: props.color || 'var(--balsa-role-accent)' }" />
+      <Icon class="knote-icon-trigger" :icon="props.icon" size="xl" :stroke-width="1.5" :style="{ color: props.color || 'var(--balsa-role-accent)' }" />
       <span class="sr-only">{{ props.label }}</span>
     </template>
     <template #default="{ close }">

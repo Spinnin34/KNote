@@ -17,7 +17,8 @@ function listSegment(source: HTMLOListElement | HTMLUListElement, items: HTMLLIE
   const segment = source.cloneNode(false) as HTMLOListElement | HTMLUListElement;
   if (source.tagName === 'OL' && offset) {
     const ordered = source as HTMLOListElement;
-    segment.start = ordered.reversed ? ordered.start - offset : ordered.start + offset;
+    const orderedSegment = segment as HTMLOListElement;
+    orderedSegment.start = ordered.reversed ? ordered.start - offset : ordered.start + offset;
   }
   items.forEach((item) => segment.append(item));
   return segment;

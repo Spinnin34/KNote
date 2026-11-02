@@ -9,8 +9,8 @@ import { basicSetup } from 'codemirror';
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
 import { EditorView, hoverTooltip, keymap, type Tooltip } from '@codemirror/view';
-import { AlertCircle, Check, CircleHelp, Code2, Download, LoaderCircle, Play, Search, Square, Terminal, Trash2, Upload } from '@lucide/vue';
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
+import { AlertCircle, BookOpen, Check, CircleHelp, Code2, Download, LoaderCircle, Play, Search, Square, Terminal, Trash2, Upload } from '@lucide/vue';
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import Attachment, { type AttachmentRejection } from '@/components/ui/Attachment.vue';
 import Badge from '@/components/ui/Badge.vue';
 import Button from '@/components/ui/Button.vue';
@@ -19,6 +19,7 @@ import Input from '@/components/ui/Input.vue';
 import Modal from '@/components/ui/Modal.vue';
 import Resizable from '@/components/ui/Resizable.vue';
 import { getPythonRuntimeConnection, nextPythonMessageId, type PythonRuntimeMessage } from '@/lib/python-runtime-client';
+import { countSearchMatches } from '@/components/workspace/code-search';
 
 type AnalysisMode = 'complete' | 'signature' | 'hover' | 'syntax' | 'lint' | 'types';
 type DiagnosticResult = {
@@ -39,6 +40,7 @@ type ConsoleLine = { id: number; kind: 'output' | 'error' | 'system' | 'input'; 
 type CodeDiagnostic = Diagnostic & { line: number; source: 'syntax' | 'lint' | 'types' };
 
 const model = defineModel<string>({ required: true });
+const PythonGuideDrawer = defineAsyncComponent(() => import('@/components/workspace/PythonGuideDrawer.vue'));
 const props = defineProps<{ pageId: string; pageTitle?: string }>();
 const runShortcut = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘↵' : 'Ctrl+↵';
 
@@ -61,7 +63,6 @@ const errorDiagnostics = computed(() => diagnostics.value.filter((diagnostic) =>
 const warningCount = computed(() => diagnostics.value.filter((diagnostic) => diagnostic.severity === 'warning').length);
 const visibleDiagnostics = computed(() => diagnostics.value.slice(0, 5));
 const hiddenDiagnosticCount = computed(() => Math.max(0, diagnostics.value.length - visibleDiagnostics.value.length));
-const primaryDiagnostic = computed(() => diagnostics.value[0] ?? null);
 const diagnosticsPending = ref(false);
 const diagnosticsNotice = ref('');
 const typeAnalysisComplete = ref(false);
@@ -87,6 +88,7 @@ const consoleLines = ref<ConsoleLine[]>([]);
 const panelSize = ref(68);
 const exportModalOpen = ref(false);
 const importModalOpen = ref(false);
+const pythonGuideOpen = ref(false);
 const exportName = ref('');
 const exportError = ref('');
 const importError = ref('');
@@ -104,7 +106,6 @@ let signatureTimer: number | undefined;
 let modelSyncTimer: number | undefined;
 let cursorSyncTimer: number | undefined;
 let searchRefreshTimer: number | undefined;
-let pendingModelValue = '';
 let completionSequence = 0;
 let signatureSequence = 0;
 let disposed = false;
@@ -164,12 +165,7 @@ function refreshSearchMatches(): void {
     searchMatchCount.value = 0;
     return;
   }
-  let count = 0;
-  for (const _match of query.getCursor(view.state)) {
-    count += 1;
-    if (count >= 10_000) break;
-  }
-  searchMatchCount.value = count;
+  searchMatchCount.value = countSearchMatches(query, view.state);
 }
 
 function updateSearchQuery(): void {
@@ -291,13 +287,33 @@ function clearConsole(): void {
   executionErrorLine.value = null;
 }
 
+function insertPythonExample(code: string): void {
+  const view = editor.value;
+  if (!view) return;
+  const { from, to } = view.state.selection.main;
+  view.dispatch({
+    changes: { from, to, insert: code },
+    selection: { anchor: from + code.length },
+    userEvent: 'input.type',
+  });
+  view.focus();
+}
+
+const forbiddenWindowsFilenameCharacter = /[<>:"/\\|?*]/;
 function suggestFileStem(value: string): string {
-  return value.trim().replace(/(\.py)+$/i, '').replace(/[<>:"/\\|?*\u0000-\u001f]/g, '-').replace(/[. ]+$/g, '') || 'main';
+  const stem = value.trim().replace(/(\.py)+$/i, '');
+  const safeStem = Array.from(stem, (character) => (
+    character.charCodeAt(0) < 0x20 || forbiddenWindowsFilenameCharacter.test(character) ? '-' : character
+  )).join('');
+  return safeStem.replace(/[. ]+$/g, '') || 'main';
 }
 
 function pythonFilename(value: string): string | null {
   const stem = value.trim().replace(/(\.py)+$/i, '');
-  if (!stem || /[<>:"/\\|?*\u0000-\u001f]/.test(stem) || /[. ]$/.test(stem)) return null;
+  const hasInvalidCharacter = Array.from(stem).some((character) => (
+    character.charCodeAt(0) < 0x20 || forbiddenWindowsFilenameCharacter.test(character)
+  ));
+  if (!stem || hasInvalidCharacter || /[. ]$/.test(stem)) return null;
   if (/^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i.test(stem)) return null;
   return `${stem}.py`;
 }
@@ -565,7 +581,7 @@ function applyDiagnostics(result: DiagnosticResult | null, source: CodeDiagnosti
     const from = Math.max(line.from, Math.min(line.to, line.from + codeMirrorColumn(line.text, column - 1)));
     const message = match[3].trim();
     const warning = /imported but unused|assigned to but never used|redefinition of unused name/.test(message);
-    const identifier = message.match(/(?:undefined name|imported but unused|assigned to but never used) ['\"]([A-Za-z_]\w*)['\"]/)?.[1];
+    const identifier = message.match(/(?:undefined name|imported but unused|assigned to but never used) ['"]([A-Za-z_]\w*)['"]/)?.[1];
     const to = Math.min(line.to, Math.max(from + (from < doc.length ? 1 : 0), from + (identifier?.length ?? 1)));
     found.push({ from, to, severity: warning ? 'warning' : 'error', message: `Python: ${message}`, line: lineNumber, source: 'lint' });
   }
@@ -601,13 +617,6 @@ function applyDiagnostics(result: DiagnosticResult | null, source: CodeDiagnosti
     lastAnalyzerNotice = String(analyzerNotice);
     appendConsole('system', `El análisis estático no está disponible: ${String(analyzerNotice).split('\n')[0]}`);
   }
-}
-
-function hasTypeAnnotations(code: string): boolean {
-  return /(?:^|\n)\s*(?:async\s+)?def\s+\w+\s*\([^\n)]*:\s*[A-Za-z_'"]/.test(code)
-    || /\)\s*->\s*[A-Za-z_'"]/.test(code)
-    || /(?:^|[;\n])\s*[A-Za-z_]\w*\s*:\s*[A-Za-z_'"]/.test(code)
-    || /#\s*type\s*:/.test(code);
 }
 
 async function analyzeTypes(code: string, line: number, column: number, syntaxValidated = false): Promise<void> {
@@ -863,6 +872,7 @@ onBeforeUnmount(() => {
   <section class="knote-code-workspace" aria-label="Editor de Python">
     <Teleport to="#knote-code-actions-target">
       <div class="knote-code-actions" aria-label="Acciones de Python">
+        <Button variant="soft" color="neutral" size="sm" :prefix-icon="BookOpen" aria-label="Abrir la guía rápida de Python" title="Guía rápida de Python" @click="pythonGuideOpen = true">Guía Python</Button>
         <Button variant="soft" color="neutral" size="sm" :prefix-icon="Search" aria-label="Buscar y reemplazar" title="Buscar y reemplazar (Ctrl/Cmd+F)" :disabled="!editor" @click="openFind()">Buscar</Button>
         <Button variant="soft" color="neutral" size="sm" :prefix-icon="Upload" :disabled="running" @click="openImportDialog">Abrir .py</Button>
         <Button variant="soft" color="neutral" size="sm" :prefix-icon="Download" @click="openExportDialog">Descargar .py</Button>
@@ -880,7 +890,7 @@ onBeforeUnmount(() => {
     <div v-if="diagnostics.length" class="knote-code-problems" role="region" aria-label="Problemas detectados">
       <div class="knote-code-problems-heading"><Icon :icon="AlertCircle" size="xs" /><strong>{{ errorDiagnostics.length }} {{ errorDiagnostics.length === 1 ? 'error' : 'errores' }}<span v-if="warningCount"> · {{ warningCount }} {{ warningCount === 1 ? 'aviso' : 'avisos' }}</span></strong><Button v-if="errorDiagnostics.length" variant="soft" color="destructive" size="sm" @click="jumpToDiagnostic(1)">Siguiente <kbd>F8</kbd></Button></div>
       <div class="knote-code-problems-list">
-        <Button v-for="issue in visibleDiagnostics" :key="`${issue.source}-${issue.from}-${issue.message}`" variant="ghost" :color="issue.severity === 'error' ? 'destructive' : 'neutral'" size="sm" class="knote-code-problem" :title="issue.message" @click="focusDiagnostic(issue)">
+        <Button v-for="issue in visibleDiagnostics" :key="`${issue.source}-${issue.from}-${issue.message}`" variant="soft" :color="issue.severity === 'error' ? 'destructive' : 'neutral'" size="sm" class="knote-code-problem" :title="issue.message" @click="focusDiagnostic(issue)">
           <span class="knote-code-problem-line">L{{ issue.line }}</span><span class="knote-code-problem-message">{{ issue.message }}</span>
         </Button>
         <span v-if="hiddenDiagnosticCount" class="knote-code-problems-more">+{{ hiddenDiagnosticCount }} más</span>
@@ -912,7 +922,7 @@ onBeforeUnmount(() => {
               <span v-if="searchText" class="knote-code-search-count" :class="{ 'knote-code-search-count--invalid': searchQueryInvalid }" aria-live="polite">{{ searchResultLabel }}</span>
               <Button variant="soft" color="neutral" size="sm" :disabled="!searchMatchCount" aria-label="Coincidencia anterior" title="Coincidencia anterior (Shift+Enter)" @click="navigateSearch(-1)">Anterior</Button>
               <Button variant="soft" color="neutral" size="sm" :disabled="!searchMatchCount" aria-label="Coincidencia siguiente" title="Coincidencia siguiente (Enter)" @click="navigateSearch(1)">Siguiente</Button>
-              <Button variant="ghost" color="neutral" size="sm" shape="fab" aria-label="Cerrar búsqueda" title="Cerrar (Esc)" @click="closeFind">×</Button>
+              <Button variant="soft" color="neutral" size="sm" shape="fab" aria-label="Cerrar búsqueda" title="Cerrar (Esc)" @click="closeFind">×</Button>
             </div>
             <div class="knote-code-search-row knote-code-search-row--replace">
               <div class="knote-code-search-field knote-code-search-field--replace">
@@ -939,7 +949,7 @@ onBeforeUnmount(() => {
             <div><Icon :icon="Terminal" size="sm" /><strong>Consola</strong></div>
             <div class="knote-code-console-actions">
               <Badge v-if="running" variant="soft" color="warning" size="sm">{{ waitingForInput ? 'Esperando entrada' : 'Ejecutando' }}</Badge>
-              <Button variant="ghost" color="neutral" size="sm" shape="fab" :prefix-icon="Trash2" aria-label="Limpiar consola" title="Limpiar consola" @click="clearConsole" />
+              <Button variant="soft" color="neutral" size="sm" shape="fab" :prefix-icon="Trash2" aria-label="Limpiar consola" title="Limpiar consola" @click="clearConsole" />
             </div>
           </div>
           <div ref="consoleScroll" class="knote-code-console-scroll" role="log" aria-label="Salida de Python" aria-live="polite" aria-relevant="additions text">
@@ -976,5 +986,7 @@ onBeforeUnmount(() => {
         <Button variant="solid" color="primary" :prefix-icon="Upload" :disabled="!importFiles.length" :loading="importing" @click="importScript(close)">Cargar en el editor</Button>
       </template>
     </Modal>
+
+    <PythonGuideDrawer :page-id="pageId" v-model="pythonGuideOpen" @insert-example="insertPythonExample" />
   </section>
 </template>

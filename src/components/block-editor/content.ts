@@ -221,7 +221,7 @@ export function sanitizeNodes(nodes: NodeListOf<ChildNode> | ChildNode[]): strin
       const checked = (node as HTMLInputElement).checked || node.hasAttribute('checked');
       return `<input type="checkbox" contenteditable="false"${checked ? ' checked' : ''}>`;
     }
-    if (tag === 'DIV' && node.classList.contains('knote-table-block')) return tablePlaceholder(node);
+    if (tag === 'DIV' && node.classList.contains('knote-table-block')) return tablePlaceholder(node as HTMLElement);
     const children = tag === 'BR' || tag === 'HR' ? '' : sanitizeNodes(Array.from(node.childNodes));
     if (tag === 'PRE') return `<pre data-language="${safeLanguage(node.getAttribute('data-language'))}" data-empty="${!node.textContent?.trim()}">${children}</pre>`;
     if (tag === 'FIGURE' && node.classList.contains('knote-image-block')) {
@@ -277,7 +277,16 @@ export function sanitizeNodes(nodes: NodeListOf<ChildNode> | ChildNode[]): strin
 export function initialHtml(value: string): string {
   if (value.startsWith(RICH_PREFIX)) {
     const parsed = new DOMParser().parseFromString(value.slice(RICH_PREFIX.length), 'text/html');
-    return sanitizeNodes(Array.from(parsed.body.childNodes));
+    const rootNodes = Array.from(parsed.body.childNodes).filter((node) => {
+      if (node.nodeType === Node.TEXT_NODE) return Boolean(node.textContent?.replace(/[\s\u00a0\u200b\ufeff]/g, ''));
+      if (node instanceof HTMLElement && node.tagName === 'P') {
+        const hasVisibleText = Boolean(node.textContent?.replace(/[\s\u00a0\u200b\ufeff]/g, ''));
+        const hasMedia = Boolean(node.querySelector('img, input, video, audio, iframe, hr, figure'));
+        return hasVisibleText || hasMedia;
+      }
+      return true;
+    });
+    return sanitizeNodes(rootNodes);
   }
   return legacyMarkdownToHtml(value);
 }

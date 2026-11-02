@@ -15,6 +15,18 @@ export interface PreparedWorkspaceTransfer {
   assets: Array<{ id: string; blob: Blob }>;
 }
 
+interface TransferPayload {
+  format: string;
+  version: number;
+  exportedAt: string;
+  snapshot: WorkspaceSnapshot;
+  assets: Array<{ id: string; type: string; data: string }>;
+}
+
+function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
 function toBase64(bytes: Uint8Array): string {
   let binary = '';
   const chunkSize = 0x8000;
@@ -36,9 +48,9 @@ function fromBase64(value: unknown, maximumBytes: number): Uint8Array {
 }
 
 async function deriveTransferKey(password: string, salt: Uint8Array): Promise<CryptoKey> {
-  const material = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']);
+  const material = await crypto.subtle.importKey('raw', toArrayBuffer(new TextEncoder().encode(password)), 'PBKDF2', false, ['deriveKey']);
   return crypto.subtle.deriveKey(
-    { name: 'PBKDF2', salt, iterations: KDF_ITERATIONS, hash: 'SHA-256' },
+    { name: 'PBKDF2', salt: toArrayBuffer(salt), iterations: KDF_ITERATIONS, hash: 'SHA-256' },
     material,
     { name: 'AES-GCM', length: 256 },
     false,
@@ -63,7 +75,7 @@ export async function createEncryptedTransfer(
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const key = await deriveTransferKey(password, salt);
-  const payload = {
+  const payload: TransferPayload = {
     format: TRANSFER_FORMAT,
     version: TRANSFER_VERSION,
     exportedAt: new Date().toISOString(),
@@ -74,7 +86,7 @@ export async function createEncryptedTransfer(
     payload.assets.push({ id, type: blob.type || 'application/octet-stream', data: toBase64(new Uint8Array(await blob.arrayBuffer())) });
   }
   const plaintext = new TextEncoder().encode(JSON.stringify(payload));
-  const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: transferAad() }, key, plaintext);
+  const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: toArrayBuffer(iv), additionalData: toArrayBuffer(transferAad()) }, key, toArrayBuffer(plaintext));
   const envelope = {
     format: TRANSFER_FORMAT,
     version: TRANSFER_VERSION,
@@ -113,7 +125,7 @@ export async function readEncryptedTransfer(file: File, password: string): Promi
   let plaintext: ArrayBuffer;
   try {
     const key = await deriveTransferKey(password, salt);
-    plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv, additionalData: transferAad() }, key, ciphertext);
+    plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: toArrayBuffer(iv), additionalData: toArrayBuffer(transferAad()) }, key, toArrayBuffer(ciphertext));
   } catch { throw new Error('La contraseña no es correcta o el archivo está dañado.'); }
 
   let payload: unknown;
