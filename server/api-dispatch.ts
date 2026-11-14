@@ -1,5 +1,5 @@
-import { handleAuthRequest } from '../server/karmancos-auth.js';
-import { handleCloudRequest } from '../server/cloud-router.js';
+import { handleAuthRequest } from './karmancos-auth.js';
+import { handleCloudRequest } from './cloud-router.js';
 
 function supportedMethods(path: string): readonly string[] | null {
   switch (path) {
@@ -34,7 +34,7 @@ function methodNotAllowed(methods: readonly string[]): Response {
   });
 }
 
-async function dispatch(request: Request): Promise<Response> {
+export async function dispatchApiRequest(request: Request): Promise<Response> {
   const path = new URL(request.url).pathname;
   if (path.startsWith('/api/auth/')) return handleAuthRequest(request, path);
 
@@ -43,8 +43,8 @@ async function dispatch(request: Request): Promise<Response> {
   return handleCloudRequest(request, path);
 }
 
-export const GET = dispatch;
-export const HEAD = dispatch;
-export const POST = dispatch;
-export const PUT = dispatch;
-export const DELETE = dispatch;
+export const GET = dispatchApiRequest;
+export const HEAD = dispatchApiRequest;
+export const POST = dispatchApiRequest;
+export const PUT = dispatchApiRequest;
+export const DELETE = dispatchApiRequest;
