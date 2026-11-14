@@ -36,7 +36,7 @@ function methodNotAllowed(methods: readonly string[]): Response {
 
 export async function dispatchApiRequest(request: Request): Promise<Response> {
   const path = new URL(request.url).pathname;
-  if (path.startsWith('/api/auth/')) return handleAuthRequest(request, path);
+  if (path.startsWith('/api/auth/') || path.startsWith('/auth/')) return handleAuthRequest(request, path);
 
   const methods = supportedMethods(path);
   if (methods && !methods.includes(request.method)) return methodNotAllowed(methods);
