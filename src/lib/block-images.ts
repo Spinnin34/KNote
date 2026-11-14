@@ -71,7 +71,16 @@ export async function getBlockImage(id: string): Promise<Blob | null> {
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
     const request = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).get(id);
-    request.onsuccess = () => resolve(request.result instanceof Blob ? request.result : null);
+    request.onsuccess = async () => {
+      if (request.result instanceof Blob) { resolve(request.result); return; }
+      try {
+        const response = await fetch(`/api/assets/${encodeURIComponent(id)}`, { credentials: 'same-origin', cache: 'no-store' });
+        if (!response.ok) { resolve(null); return; }
+        const remote = await response.blob();
+        await saveBlockImage(remote, id);
+        resolve(remote);
+      } catch { resolve(null); }
+    };
     request.onerror = () => reject(request.error || new Error('No se pudo leer la imagen.'));
   });
 }

@@ -9,11 +9,12 @@ const localAuthVariables = [
   'KARMANCOSID_CLIENT_SECRET',
   'KARMANCOSID_REDIRECT_URI',
   'KNOTE_SESSION_SECRET',
+  'KNOTE_MONGODB_URI',
+  'KNOTE_MONGODB_DB',
+  'BLOB_READ_WRITE_TOKEN',
 ];
 
 function localKarmancosAuth() {
-  let handlerModule;
-
   return {
     name: 'knote-karmancos-auth-local',
     configureServer(server) {
@@ -22,12 +23,22 @@ function localKarmancosAuth() {
         const host = request.headers.host ?? 'localhost:5173';
         const protocol = request.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
         const requestUrl = new URL(request.url ?? '/', `${protocol}://${host}`);
-        if (!['/auth/login', '/auth/callback', '/auth/session', '/auth/logout'].includes(requestUrl.pathname)) {
+        const authRoute = ['/auth/login', '/auth/callback', '/auth/session', '/auth/logout'].includes(requestUrl.pathname);
+        const cloudRoute = requestUrl.pathname.startsWith('/api/workspace')
+          || requestUrl.pathname.startsWith('/api/conflicts/')
+          || requestUrl.pathname.startsWith('/api/shares/')
+          || requestUrl.pathname.startsWith('/api/public/')
+          || requestUrl.pathname.startsWith('/api/assets/');
+        if (!authRoute && !cloudRoute) {
           return next();
         }
 
         try {
           const headers = new Headers();
+          for (const [headerName, headerValue] of Object.entries(request.headers)) {
+            if (headerName === 'host' || headerName === 'connection' || headerName === 'content-length' || Array.isArray(headerValue)) continue;
+            if (typeof headerValue === 'string') headers.set(headerName, headerValue);
+          }
           for (const headerName of ['cookie', 'origin', 'sec-fetch-site']) {
             const headerValue = request.headers[headerName];
             if (typeof headerValue === 'string') headers.set(headerName, headerValue);
@@ -46,8 +57,9 @@ function localKarmancosAuth() {
             init.duplex = 'half';
           }
           const webRequest = new Request(requestUrl, init);
-          handlerModule ??= await server.ssrLoadModule('/server/karmancos-auth.ts');
-          const authResponse = await handlerModule.handleAuthRequest(webRequest, requestUrl.pathname);
+          const authResponse = authRoute
+            ? await (await server.ssrLoadModule('/server/karmancos-auth.ts')).handleAuthRequest(webRequest, requestUrl.pathname)
+            : await (await server.ssrLoadModule('/server/cloud-router.ts')).handleCloudRequest(webRequest, requestUrl.pathname);
           response.statusCode = authResponse.status;
           authResponse.headers.forEach((value, name) => {
             if (name.toLowerCase() !== 'set-cookie') response.setHeader(name, value);

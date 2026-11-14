@@ -7,6 +7,7 @@ import {
 import { deleteBlockImage, getBlockImage, listBlockImageIds, saveBlockImage } from '@/lib/block-images';
 import type { WorkspaceSnapshot } from '@/lib/desktop-vault';
 import { isDesktopRuntime, isDesktopVaultReady, saveDesktopWorkspace } from '@/lib/desktop-vault';
+import { listCloudLocalStates } from '@/lib/cloud-cache';
 
 interface WorkspacePersistenceOptions {
   pages: Ref<WorkspacePage[]>;
@@ -15,13 +16,18 @@ interface WorkspacePersistenceOptions {
   databaseViewStates: Ref<Record<string, DatabaseViewState>>;
   snapshot: ComputedRef<WorkspaceSnapshot>;
   notify: (title: string, description: string, color?: ToastItem['color']) => void;
+  enabled?: Ref<boolean>;
+  cloudActive?: Ref<boolean>;
+  persistCloud?: (serializedSnapshot: string) => Promise<'synced' | 'pending' | 'conflict'>;
 }
 
 export function useWorkspacePersistence(options: WorkspacePersistenceOptions) {
   const { pages, todayTasks, databaseViewStates, snapshot, notify } = options;
+  const enabled = options.enabled ?? ref(true);
+  const cloudActive = options.cloudActive ?? ref(false);
   const bannerFiles = ref<readonly File[]>([]);
   const bannerObjectUrls = ref<Record<string, string>>({});
-  const saveState = ref<'saved' | 'saving' | 'error'>(isDesktopRuntime() && !isDesktopVaultReady() ? 'error' : 'saved');
+  const saveState = ref<'saved' | 'saving' | 'pending' | 'conflict' | 'error'>(isDesktopRuntime() && !isDesktopVaultReady() ? 'error' : 'saved');
   let saveTimer: number | undefined;
   let databaseViewSaveTimer: number | undefined;
   let assetPruneTimer: number | undefined;
@@ -32,19 +38,38 @@ export function useWorkspacePersistence(options: WorkspacePersistenceOptions) {
       const referenced = new Set<string>();
       const collect = (value: string | undefined) => {
         if (!value) return;
-        for (const match of value.matchAll(/knote-asset:([\da-f-]{20,})/gi)) referenced.add(match[1]);
+        for (const match of value.matchAll(/(?:knote-asset:|data-asset-id=["'])([\da-f-]{20,})/gi)) referenced.add(match[1]);
       };
-      pages.value.forEach((page) => {
-        collect(page.banner);
-        collect(page.content);
-        page.entries.forEach((entry) => collect(entry.content));
-      });
+      const collectPages = (items: unknown) => {
+        if (!Array.isArray(items)) return;
+        items.forEach((value) => {
+          if (!value || typeof value !== 'object') return;
+          const page = value as Partial<WorkspacePage>;
+          collect(page.banner);
+          collect(page.content);
+          page.entries?.forEach((entry) => collect(entry.content));
+        });
+      };
+      collectPages(pages.value);
+      if (!isDesktopRuntime()) {
+        const guestPages = localStorage.getItem(PAGE_STORAGE_KEY);
+        if (guestPages) {
+          try { collectPages(JSON.parse(guestPages) as unknown); }
+          catch { return; }
+        }
+        const cloudStates = await listCloudLocalStates();
+        for (const cloudState of cloudStates) {
+          collectPages(cloudState.snapshot.pages);
+          collectPages(cloudState.baseSnapshot?.pages);
+        }
+      }
       const stored = await listBlockImageIds();
       await Promise.all(stored.filter((id) => !referenced.has(id)).map(deleteBlockImage));
     } catch { /* Keep existing images if the browser cannot inspect IndexedDB. */ }
   }
 
   function persist(): void {
+    if (!enabled.value) return;
     if (saveTimer !== undefined) window.clearTimeout(saveTimer);
     saveTimer = undefined;
     const previousState = saveState.value;
@@ -70,6 +95,27 @@ export function useWorkspacePersistence(options: WorkspacePersistenceOptions) {
       });
       return;
     }
+    if (cloudActive.value && options.persistCloud) {
+      saveState.value = 'saving';
+      let serializedSnapshot: string;
+      try { serializedSnapshot = JSON.stringify(snapshot.value); }
+      catch {
+        saveState.value = 'error';
+        if (previousState !== 'error') notify('No se pudo guardar', 'KNote no pudo preparar los datos para la nube.', 'destructive');
+        return;
+      }
+      void options.persistCloud(serializedSnapshot).then((result) => {
+        saveState.value = result === 'synced' ? 'saved' : result;
+        if (result === 'synced') {
+          if (assetPruneTimer !== undefined) window.clearTimeout(assetPruneTimer);
+          assetPruneTimer = window.setTimeout(() => { void pruneUnusedBlockImages(); }, 250);
+        }
+      }).catch(() => {
+        saveState.value = 'error';
+        if (previousState !== 'error') notify('No se pudo guardar', 'El cambio permanece en este dispositivo. Reintenta la sincronización.', 'destructive');
+      });
+      return;
+    }
     saveState.value = 'saving';
     try {
       localStorage.setItem(PAGE_STORAGE_KEY, JSON.stringify(pages.value));
@@ -84,6 +130,7 @@ export function useWorkspacePersistence(options: WorkspacePersistenceOptions) {
   }
 
   function queueSave(): void {
+    if (!enabled.value) return;
     if (isDesktopRuntime() && !isDesktopVaultReady()) { saveState.value = 'error'; return; }
     if (saveTimer !== undefined) window.clearTimeout(saveTimer);
     saveState.value = 'saving';
@@ -91,11 +138,12 @@ export function useWorkspacePersistence(options: WorkspacePersistenceOptions) {
   }
 
   function queueDatabaseViewSave(): void {
+    if (!enabled.value) return;
     if (isDesktopRuntime() && !isDesktopVaultReady()) { saveState.value = 'error'; return; }
     if (databaseViewSaveTimer !== undefined) window.clearTimeout(databaseViewSaveTimer);
     databaseViewSaveTimer = window.setTimeout(() => {
       databaseViewSaveTimer = undefined;
-      if (isDesktopRuntime()) { persist(); return; }
+      if (isDesktopRuntime() || cloudActive.value) { persist(); return; }
       try { localStorage.setItem(DATABASE_VIEWS_STORAGE_KEY, JSON.stringify(databaseViewStates.value)); }
       catch { notify('No se guardaron las vistas', 'El navegador no permitió guardar las preferencias de esta tabla.', 'warning'); }
     }, 180);
@@ -111,6 +159,7 @@ export function useWorkspacePersistence(options: WorkspacePersistenceOptions) {
       window.clearTimeout(databaseViewSaveTimer);
       databaseViewSaveTimer = undefined;
       if (isDesktopRuntime()) persist();
+      else if (cloudActive.value) persist();
       else {
         try { localStorage.setItem(DATABASE_VIEWS_STORAGE_KEY, JSON.stringify(databaseViewStates.value)); }
         catch { /* Keep the rest of the workspace available if view preferences cannot be stored. */ }

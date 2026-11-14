@@ -29,7 +29,47 @@ Configura en `.env.local` para desarrollo y en las variables de entorno de Verce
 - `KNOTE_SESSION_SECRET`: clave independiente, aleatoria y de al menos 32 caracteres para cifrar las cookies de sesión.
 - `KARMANCOSID_REDIRECT_URI`: callback exacto. En producción es `https://knote.karmancos.space/auth/callback`; en desarrollo local usa `http://localhost:5173/auth/callback`.
 
-Registra en Karmancos ID la URL de retorno exacta y el origen web de cada entorno: `https://knote.karmancos.space/auth/callback` con `https://knote.karmancos.space` en producción; `http://localhost:5173/auth/callback` con `http://localhost:5173` durante desarrollo local. La cuenta conectada muestra su foto, nombre de usuario, nombre y apellidos dentro de **Mi espacio · Personal**. Cerrar sesión elimina la sesión local de KNote. En esta fase no se vinculan cuentas, no se sincronizan notas y todavía no se procesa el callback de backchannel logout.
+Registra en Karmancos ID la URL de retorno exacta y el origen web de cada entorno: `https://knote.karmancos.space/auth/callback` con `https://knote.karmancos.space` en producción; `http://localhost:5173/auth/callback` con `http://localhost:5173` durante desarrollo local. La cuenta conectada muestra su foto, nombre de usuario, nombre y apellidos dentro de **Mi espacio · Personal**. En la web, al iniciar sesión, KNote sincroniza páginas, tareas, preferencias y vistas con MongoDB Atlas. Los cambios se guardan primero en una cola local y se reintentan si se pierde la conexión. Al encontrar datos tanto en este dispositivo como en la cuenta, puedes fusionarlos o usar la nube; los datos locales se conservan. Todavía no se procesa el callback de backchannel logout.
+
+Configura también `KNOTE_MONGODB_URI`, `KNOTE_MONGODB_DB` y `BLOB_READ_WRITE_TOKEN`. Usa valores y servicios separados para desarrollo, Preview/staging y Production: una base de datos y un almacén Blob de pruebas para Preview, y recursos propios de producción para el entorno Production de Vercel. Registra el callback y el origen web de Karmancos ID que correspondan a cada entorno; no compartas las claves de sesión entre ellos. Crea un usuario de Atlas limitado a la base de KNote y guarda las credenciales solo como variables de servidor, nunca con el prefijo `VITE_`.
+
+Antes del lanzamiento, despliega primero en Preview y verifica cuentas aisladas, sincronización y carga de imágenes. Activa las copias de seguridad automáticas o recuperación a un punto en el tiempo que admita tu clúster de Atlas, restaura una copia en una base de pruebas y confirma que la aplicación puede leerla. Repite esta prueba antes de migraciones importantes y conserva un procedimiento para volver a la versión anterior. Vercel Blob se configura como almacenamiento privado; las subidas de hasta 12 MB se hacen directamente desde el navegador, y KNote registra su propiedad en MongoDB.
+
+### Crear MongoDB Atlas desde Windows
+
+Instala Atlas CLI y MongoDB Shell (`mongosh`) desde las descargas oficiales de MongoDB. Para desarrollo o Preview, inicia sesión y crea un clúster de prueba; Atlas CLI te pedirá elegir organización/región y permite omitir los datos de muestra:
+
+```powershell
+atlas --version
+atlas auth login
+atlas setup --clusterName knote-preview --skipSampleData
+```
+
+El asistente añade la IP de tu equipo para probar localmente. Eso no autoriza automáticamente las funciones de Vercel. En Production, permite solo la salida de red fija de Vercel o configura una conexión privada; evita abrir Atlas a todas las IP si puedes.
+
+En Atlas, crea un usuario de base de datos separado para la aplicación y asígnale solo `readWrite` sobre `knote`. Para obtener el proyecto y la cadena SRV:
+
+```powershell
+atlas projects list
+atlas clusters connectionStrings describe knote-preview --projectId <PROJECT_ID>
+```
+
+Puedes crear explícitamente la base y las colecciones con `mongosh` (sustituye el host por el de la cadena SRV; al omitir la contraseña, Shell la solicita de forma interactiva):
+
+```powershell
+mongosh "mongodb+srv://<CLUSTER_HOST>/knote" --username knote-app
+```
+
+Dentro de `mongosh`:
+
+```javascript
+const knote = db.getSiblingDB('knote');
+for (const name of ['pages', 'user_state', 'conflicts', 'shares', 'assets']) {
+  if (!knote.getCollectionNames().includes(name)) knote.createCollection(name);
+}
+```
+
+KNote también crea estas colecciones e índices al conectarse por primera vez, así que el paso manual sirve para comprobar el acceso. En Vercel configura `KNOTE_MONGODB_URI` con la cadena SRV y el usuario de la aplicación, `KNOTE_MONGODB_DB=knote`, y `BLOB_READ_WRITE_TOKEN` como variables de servidor. No pegues contraseñas en comandos guardados en el historial ni en el repositorio. El clúster gratuito sirve para pruebas; el de Production debe tener un nivel que admita las copias y restauraciones requeridas.
 
 El inicio de sesión de escritorio no está habilitado. La aplicación de Windows conserva el resto de sus funciones locales.
 
@@ -48,7 +88,9 @@ Las comprobaciones locales y de CI se ejecutan con `bun run check`; también est
 
 ## Datos
 
-Las notas siguen sin necesitar una cuenta ni un servidor. La versión web guarda los datos en el almacenamiento local del navegador (`localStorage` e `IndexedDB`), en el dispositivo y origen desde el que se abre. Al entrar por primera vez aparecen notas de ejemplo que puedes editar o eliminar.
+Sin iniciar sesión, la versión web guarda los datos en el almacenamiento local del navegador (`localStorage` e `IndexedDB`), en el dispositivo y origen desde el que se abre. Al iniciar sesión, el espacio de la cuenta se mantiene separado del espacio local. Al entrar por primera vez aparecen notas de ejemplo que puedes editar o eliminar.
+
+Los documentos permanecen privados por defecto. Desde **Compartir** puedes publicar un documento de texto con un enlace aleatorio no listado; el enlace muestra los cambios ya sincronizados y se puede revocar en cualquier momento. Los enlaces revocados dejan de mostrar el documento y sus imágenes.
 
 La aplicación de Windows guarda páginas, ajustes e imágenes en un único archivo cifrado, `Documentos/KNote/KNote.knt`. La clave se conserva en el Administrador de credenciales de Windows y queda ligada a la cuenta y al equipo. Para mover notas desde la versión web, abre **Personalizar tu espacio → Copias cifradas**, crea una transferencia protegida con contraseña y después impórtala desde la aplicación. Esa contraseña solo protege la transferencia; la app usa la clave de Windows para el archivo local. Si se pierde el perfil de Windows o su clave, el archivo no se podrá abrir; conserva una transferencia cifrada como copia de seguridad. Para recuperar una transferencia después de perder la clave, mueve el `KNote.knt` anterior fuera de `Documentos/KNote`, abre KNote para crear un archivo nuevo e importa el `.kntx`.
 

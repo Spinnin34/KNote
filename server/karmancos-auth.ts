@@ -283,15 +283,26 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+/** Returns the authenticated KNote identity from the encrypted, HttpOnly cookie. */
+export function getAuthenticatedProfile(request: Request): KarmancosProfile | null {
+  try {
+    const settings = getRuntimeSettings();
+    const value = readCookie(request, SESSION_COOKIE);
+    const session = value ? unseal<KNoteSession>(value, settings.sessionSecret, 'session') : null;
+    const profile = session?.profile;
+    return profile && typeof profile.subject === 'string' && profile.subject.length > 0 ? profile : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function handleSession(request: Request): Promise<Response> {
   if (request.method !== 'GET') return jsonResponse({ error: 'Método no permitido.' }, 405);
   if (!isConfigured()) return jsonResponse({ configured: false, profile: null });
 
   try {
-    const settings = getRuntimeSettings();
-    const value = readCookie(request, SESSION_COOKIE);
-    const session = value ? unseal<KNoteSession>(value, settings.sessionSecret, 'session') : null;
-    return jsonResponse({ configured: true, profile: session?.profile ?? null });
+    getRuntimeSettings();
+    return jsonResponse({ configured: true, profile: getAuthenticatedProfile(request) });
   } catch {
     return jsonResponse({ configured: false, profile: null });
   }

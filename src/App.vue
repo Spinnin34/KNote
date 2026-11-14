@@ -34,6 +34,10 @@ import WorkspacePreferencesDialog from '@/components/workspace/WorkspacePreferen
 import PageEntryDialog from '@/components/workspace/PageEntryDialog.vue';
 import DeleteEntryDialog from '@/components/workspace/DeleteEntryDialog.vue';
 import DatabaseWorkspace from '@/components/workspace/DatabaseWorkspace.vue';
+import CloudImportDialog from '@/components/workspace/CloudImportDialog.vue';
+import CloudConflictDialog from '@/components/workspace/CloudConflictDialog.vue';
+import PageShareDialog from '@/components/workspace/PageShareDialog.vue';
+import PublicPage from '@/components/workspace/PublicPage.vue';
 import type { CalendarModelValue } from '@/components/ui/Calendar.vue';
 import type { MenuItem, MenuSelection } from '@/components/ui/menu';
 import type { NavigationLink } from '@/components/ui/navigation';
@@ -43,16 +47,21 @@ import { getDesktopVaultError, isDesktopRuntime } from '@/lib/desktop-vault';
 import type { WorkspaceSnapshot } from '@/lib/desktop-vault';
 import type { PreparedWorkspaceTransfer } from '@/lib/workspace-transfer';
 import type { BoardStatus, DatabaseViewState, PageEntry, PageType, TaskPriority, TodayTask, WorkspacePage, WorkspacePreferences } from '@/domain/workspace/types';
-import { defaultPreferences, PREFERENCES_STORAGE_KEY, priorityOptions, statusOptions } from '@/domain/workspace/constants';
+import { DATABASE_VIEWS_STORAGE_KEY, defaultPreferences, PAGE_STORAGE_KEY, PREFERENCES_STORAGE_KEY, TASK_STORAGE_KEY, priorityOptions, statusOptions } from '@/domain/workspace/constants';
 import { pageIconOptions } from '@/domain/workspace/page-icons';
 import { entryTags, normalizeDatabaseViewStates, normalizePages, normalizePreferences, normalizeTodayTasks, readPages, readPreferences, readTodayTasks, readDatabaseViewStates } from '@/domain/workspace/normalizers';
 import { useWorkspacePersistence } from '@/composables/useWorkspacePersistence';
+import { useCloudWorkspace } from '@/composables/useCloudWorkspace';
 import { useDatabaseWorkspace } from '@/composables/useDatabaseWorkspace';
 import { useKarmancosAuth } from '@/composables/useKarmancosAuth';
 import { makeId } from '@/domain/workspace/ids';
+import type { CloudSnapshot } from '@/lib/cloud-cache';
 
 const BlockEditor = defineAsyncComponent({ loader: () => import('@/components/BlockEditor.vue'), delay: 120, timeout: 15000 });
 const CodeWorkspace = defineAsyncComponent({ loader: () => import('@/components/workspace/CodeWorkspace.vue'), delay: 100, timeout: 15000 });
+const isPublicRoute = /^\/p\/[\da-zA-Z_-]{40,64}\/?$/.test(window.location.pathname);
+const browserHadStoredWorkspace = !isDesktopRuntime() && [PAGE_STORAGE_KEY, TASK_STORAGE_KEY, PREFERENCES_STORAGE_KEY, DATABASE_VIEWS_STORAGE_KEY]
+  .some((key) => localStorage.getItem(key) !== null);
 const pages = ref<WorkspacePage[]>(readPages());
 const todayTasks = ref<TodayTask[]>(readTodayTasks());
 const preferences = ref<WorkspacePreferences>(readPreferences());
@@ -109,6 +118,8 @@ const commandOpen = ref(false);
 const commandQuery = ref('');
 const selectedDate = ref<CalendarModelValue>(new Date());
 const toasts = ref<readonly ToastItem[]>([]);
+const shareDialogOpen = ref(false);
+const conflictDialogOpen = ref(false);
 let clockTimer: number | undefined;
 let toastCounter = 0;
 let removeDesktopCloseListener: (() => void) | undefined;
@@ -124,6 +135,7 @@ const {
   signIn: signInWithKarmancos,
   signOut: signOutFromKarmancos,
 } = useKarmancosAuth();
+const persistenceEnabled = ref(isDesktopRuntime());
 
 const activePage = computed(() => pages.value.find((page) => page.id === selectedId.value) ?? null);
 const karmancosDisplayName = computed(() => {
@@ -151,7 +163,12 @@ const appPreferencesStyle = computed(() => ({
 }));
 async function signOutAndCloseAccount(close: () => void): Promise<void> {
   await signOutFromKarmancos();
-  if (!karmancosAuthError.value) close();
+  if (!karmancosAuthError.value) {
+    cloudWorkspace.activateGuest(readGuestSnapshot());
+    persistenceEnabled.value = true;
+    persist();
+    close();
+  }
 }
 const sortedPages = computed(() => [...pages.value].sort((left, right) => right.updatedAt - left.updatedAt));
 const agendaPage = computed(() => sortedPages.value.find((page) => page.type === 'calendar') ?? null);
@@ -282,7 +299,8 @@ const breadcrumbItems = computed(() => {
 });
 const pageMenuItems = computed<readonly MenuItem[]>(() => [
   { id: 'favorite', type: 'checkbox', label: activePage.value?.favorite ? 'Quitar de favoritos' : 'Añadir a favoritos', icon: Star, checked: Boolean(activePage.value?.favorite), disabled: !activePage.value },
-  { id: 'copy-link', label: 'Copiar enlace de esta instalación', icon: Link2, disabled: !activePage.value },
+  { id: 'share-page', label: 'Compartir o publicar documento', icon: Link2, disabled: !activePage.value },
+  { id: 'copy-local-link', label: 'Copiar enlace local', icon: Link2, disabled: !activePage.value },
   { id: 'menu-separator', type: 'separator' },
   { id: 'delete', label: 'Eliminar página', icon: Trash2, destructive: true, disabled: !activePage.value },
 ]);
@@ -310,12 +328,49 @@ function notify(title: string, description: string, color: ToastItem['color'] = 
   toastCounter += 1;
   toasts.value = [...toasts.value, { id: 'toast-' + toastCounter, title, description, color, variant: 'surface', duration: 3200, dismissible: true }];
 }
+function readGuestSnapshot(): CloudSnapshot {
+  return { pages: readPages(), todayTasks: readTodayTasks(), preferences: readPreferences(), databaseViewStates: readDatabaseViewStates() };
+}
+function applyCloudSnapshot(snapshot: CloudSnapshot): void {
+  pages.value = normalizePages(snapshot.pages);
+  todayTasks.value = normalizeTodayTasks(snapshot.todayTasks);
+  preferences.value = normalizePreferences(snapshot.preferences);
+  databaseViewStates.value = normalizeDatabaseViewStates(snapshot.databaseViewStates);
+  if (selectedId.value !== 'home' && !pages.value.some((page) => page.id === selectedId.value)) selectedId.value = 'home';
+}
+const cloudWorkspace = useCloudWorkspace({ pages, todayTasks, preferences, databaseViewStates, applySnapshot: applyCloudSnapshot, notify });
+const appReady = cloudWorkspace.ready;
+const cloudImportPreview = cloudWorkspace.importPreview;
+const cloudConflict = computed(() => cloudWorkspace.conflicts.value[0] ?? null);
+async function chooseCloudImport(choice: 'merge' | 'cloud'): Promise<void> {
+  await cloudWorkspace.chooseImport(choice);
+  if (cloudWorkspace.ready.value) {
+    persistenceEnabled.value = true;
+    if (cloudWorkspace.active.value) persist();
+  }
+}
+function closeCloudImport(): void {
+  if (cloudImportPreview.value) void chooseCloudImport('cloud');
+}
+watch(() => cloudWorkspace.conflicts.value.length, (count) => {
+  if (count > 0) conflictDialogOpen.value = true;
+});
 const {
   bannerFiles, bannerObjectUrls, saveState,
   persist, queueSave, queueDatabaseViewSave, flushPendingChanges,
   pruneUnusedBlockImages, hydratePageBanners, migrateLegacyBanners, touchPage,
   waitForPendingSaves, saveSnapshot, dispose,
-} = useWorkspacePersistence({ pages, todayTasks, preferences, databaseViewStates, snapshot: workspaceSnapshot, notify });
+} = useWorkspacePersistence({
+  pages, todayTasks, preferences, databaseViewStates, snapshot: workspaceSnapshot, notify,
+  enabled: persistenceEnabled, cloudActive: cloudWorkspace.active, persistCloud: cloudWorkspace.flush,
+});
+const cloudSaveLabel = computed(() => {
+  if (saveState.value === 'conflict' || cloudWorkspace.status.value === 'conflict') return 'Conflicto por resolver';
+  if (saveState.value === 'error') return 'Error al guardar';
+  if (saveState.value === 'saving' || cloudWorkspace.status.value === 'syncing') return 'Sincronizando';
+  if (saveState.value === 'pending' || cloudWorkspace.status.value === 'pending') return 'Pendiente de conexión';
+  return cloudWorkspace.active.value ? 'Sincronizado' : 'Guardado en este dispositivo';
+});
 const {
   defaultDatabaseViewState, parseEntryTags, touchDetailEntry,
   databaseQuery, databaseStatusFilter, visibleDatabaseProperties, collapsedTableEntries, activeView,
@@ -516,7 +571,8 @@ async function copyCurrentLink(): Promise<void> {
 }
 function onPageMenu(selection: MenuSelection): void {
   if (selection.id === 'favorite' && activePage.value) toggleFavorite(activePage.value);
-  if (selection.id === 'copy-link') void copyCurrentLink();
+  if (selection.id === 'share-page') shareDialogOpen.value = true;
+  if (selection.id === 'copy-local-link') void copyCurrentLink();
   if (selection.id === 'delete') deleteCurrentPage();
 }
 function onDetailEntryMenu(selection: MenuSelection): void {
@@ -669,7 +725,8 @@ function onGlobalKeydown(event: KeyboardEvent): void {
   }
 }
 watch(preferences, (value) => {
-  if (isDesktopRuntime()) { void value; queueSave(); return; }
+  if (isDesktopRuntime() || cloudWorkspace.active.value) { void value; queueSave(); return; }
+  if (!persistenceEnabled.value) return;
   try { localStorage.setItem(PREFERENCES_STORAGE_KEY, JSON.stringify(value)); }
   catch { notify('No se guardaron los ajustes', 'El navegador no permitió guardar las preferencias.', 'warning'); }
 }, { deep: true });
@@ -679,7 +736,7 @@ watch(databaseViewStates, (value) => {
 }, { deep: true });
 watch(() => pages.value.map((page) => `${page.id}:${page.banner || ''}`).join('|'), () => { void hydratePageBanners(); });
 onMounted(() => {
-  void initializeKarmancosAuth();
+  if (isPublicRoute) return;
   window.addEventListener('keydown', onGlobalKeydown);
   window.addEventListener('popstate', syncPageFromHistory);
   window.addEventListener('pagehide', flushPendingChanges);
@@ -701,9 +758,28 @@ onMounted(() => {
   clockTimer = window.setInterval(() => { currentTime.value = Date.now(); }, 60_000);
   const vaultError = getDesktopVaultError();
   if (vaultError) notify('No se pudo abrir el archivo local', vaultError, 'destructive');
-  persist();
-  void migrateLegacyBanners().then(hydratePageBanners);
-  void hydratePageBanners();
+  void (async () => {
+    await migrateLegacyBanners();
+    await hydratePageBanners();
+    if (isDesktopRuntime()) {
+      persistenceEnabled.value = true;
+      cloudWorkspace.activateGuest({ pages: pages.value, todayTasks: todayTasks.value, preferences: preferences.value, databaseViewStates: databaseViewStates.value });
+      persist();
+      return;
+    }
+    await initializeKarmancosAuth();
+    if (karmancosProfile.value) {
+      await cloudWorkspace.connect(karmancosProfile.value.subject, {
+        pages: pages.value, todayTasks: todayTasks.value, preferences: preferences.value, databaseViewStates: databaseViewStates.value,
+      }, browserHadStoredWorkspace);
+    } else {
+      cloudWorkspace.activateGuest(readGuestSnapshot());
+    }
+    if (cloudWorkspace.ready.value) {
+      persistenceEnabled.value = true;
+      persist();
+    }
+  })();
 });
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onGlobalKeydown);
@@ -718,7 +794,21 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="knote-shell" :data-density="preferences.density" :style="appPreferencesStyle">
+  <PublicPage v-if="isPublicRoute" />
+  <template v-else>
+    <CloudImportDialog
+      :model-value="Boolean(cloudImportPreview)"
+      :preview="cloudImportPreview"
+      :busy="cloudWorkspace.status.value === 'loading'"
+      @choose="chooseCloudImport"
+      @update:model-value="(open) => { if (!open) closeCloudImport(); }"
+    />
+    <div v-if="!appReady" class="knote-app-startup" role="status" aria-live="polite">
+      <span class="knote-public-mark" aria-hidden="true">K</span>
+      <strong>{{ cloudImportPreview ? 'Revisa tus espacios para continuar' : 'Abriendo tu espacio seguro…' }}</strong>
+      <span>Los cambios locales se conservan.</span>
+    </div>
+    <div v-else class="knote-shell" :data-density="preferences.density" :style="appPreferencesStyle">
     <button
       class="knote-edge-trigger"
       type="button"
@@ -831,7 +921,7 @@ onBeforeUnmount(() => {
           </dl>
         </template>
         <p v-else class="knote-account-intro">
-          Inicia sesión con Karmancos ID para mostrar tu foto de perfil, nombre de usuario, nombre y apellidos aquí.
+          Inicia sesión con Karmancos ID para sincronizar tus páginas con MongoDB y publicar documentos mediante enlaces que puedes revocar.
         </p>
 
         <p v-if="karmancosAuthError" class="knote-account-message knote-account-message--error" role="alert">{{ karmancosAuthError }}</p>
@@ -880,6 +970,23 @@ onBeforeUnmount(() => {
       </template>
     </Modal>
 
+    <PageShareDialog
+      v-model="shareDialogOpen"
+      :page="activePage"
+      :signed-in="Boolean(karmancosProfile)"
+      :cloud-active="cloudWorkspace.active.value"
+      :save-state="saveState"
+      @sign-in="signInWithKarmancos"
+      @notify="notify"
+    />
+    <CloudConflictDialog
+      v-model="conflictDialogOpen"
+      :conflict="cloudConflict"
+      :total="cloudWorkspace.conflicts.value.length"
+      :busy="cloudWorkspace.isResolving.value"
+      @choose="(choice) => cloudConflict && cloudWorkspace.resolveConflict(cloudConflict.id, choice)"
+    />
+
     <div class="knote-main" :class="{ 'knote-main--inspector': entryInspectorOpen && Boolean(detailEntry && detailPage) }">
       <header class="knote-topbar">
         <div class="knote-topbar-left">
@@ -889,7 +996,11 @@ onBeforeUnmount(() => {
         <div class="knote-topbar-actions">
           <div v-if="activePage?.type === 'code'" id="knote-code-actions-target" class="knote-code-actions-target" />
           <template v-else>
-            <Button v-if="activePage" variant="soft" color="neutral" size="sm" :prefix-icon="Link2" aria-label="Copiar enlace local" title="Copia un enlace local. Los datos no se sincronizan entre dispositivos." class="knote-topbar-copy-link" @click="copyCurrentLink">Copiar enlace local</Button>
+            <Badge v-if="cloudWorkspace.active.value" variant="outline" :color="saveState === 'error' || saveState === 'conflict' ? 'warning' : 'info'" size="sm" class="knote-cloud-save-status" :aria-label="cloudSaveLabel">
+              {{ cloudSaveLabel }}
+            </Badge>
+            <Button v-if="cloudWorkspace.conflicts.value.length" variant="soft" color="destructive" size="sm" :disabled="cloudWorkspace.isResolving.value" @click="conflictDialogOpen = true">Revisar conflicto</Button>
+            <Button v-if="activePage" variant="soft" color="neutral" size="sm" :prefix-icon="Link2" aria-label="Compartir documento" title="Controla si este documento sigue privado o se publica con un enlace." class="knote-topbar-copy-link" @click="shareDialogOpen = true">Compartir</Button>
             <Button v-if="activePage" variant="soft" color="neutral" size="sm" :prefix-icon="Star" :aria-label="activePage.favorite ? 'Quitar de favoritos' : 'Añadir a favoritos'" :title="activePage.favorite ? 'Quitar de favoritos' : 'Añadir a favoritos'" :class="{ 'knote-is-favorite': activePage.favorite }" @click="toggleFavorite(activePage)" />
             <DropdownMenu v-if="activePage" id="page-actions" label="Más acciones de página" align="end" variant="surface" :items="pageMenuItems" @select="onPageMenu">
               <template #trigger><Icon :icon="MoreHorizontal" size="sm" /></template>
@@ -1195,5 +1306,6 @@ onBeforeUnmount(() => {
       </CommandMenu>
       <ToastViewport v-model="toasts" position="bottom-end" label="Avisos de KNote" @dismiss="removeToast" />
     </div>
-  </div>
+    </div>
+  </template>
 </template>
