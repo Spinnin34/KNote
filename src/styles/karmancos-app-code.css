@@ -53,6 +53,7 @@
   border: 1px solid var(--balsa-role-border);
   border-radius: .5rem;
   background: var(--knote-code-editor-surface);
+  transition-property: background-color, border-color;
 }
 .knote-code-panels[data-orientation="vertical"]:not(.knote-code-panels--editor-only) {
   min-height: max(23rem, calc(var(--knote-code-editor-min) + var(--knote-code-console-min) + .875rem));
