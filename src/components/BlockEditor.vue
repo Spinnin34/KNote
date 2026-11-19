@@ -1,13 +1,12 @@
 <script setup lang="ts">
-import { createApp, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, createApp, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import {
-  Bold, ChevronDown, Code2, Columns3, Copy, GripVertical, Highlighter, Image as ImageIcon, Italic,
+  ArrowDown, ArrowUp, Bold, ChevronDown, Code2, Columns3, Copy, GripVertical, Highlighter, Image as ImageIcon, Italic,
   Link2, List, ListOrdered, ListTodo, Minus, Plus, Quote, Sigma, Strikethrough, Table as TableIcon,
-  Trash2, Type, Underline, X,
+  Redo2, Trash2, Type, Underline, Undo2, X,
 } from '@lucide/vue';
 import Button from '@/components/ui/Button.vue';
 import CommandMenu from '@/components/ui/CommandMenu.vue';
-import ContextMenu from '@/components/ui/ContextMenu.vue';
 import DropdownMenu from '@/components/ui/DropdownMenu.vue';
 import Icon from '@/components/ui/Icon.vue';
 import ColorPicker from '@/components/ui/ColorPicker.vue';
@@ -15,12 +14,13 @@ import Attachment from '@/components/ui/Attachment.vue';
 import TableBlockEditor from '@/components/BlockTableEditor.vue';
 import type { CommandGroup, CommandItem } from '@/components/ui/command';
 import type { MenuItem, MenuSelection } from '@/components/ui/menu';
-import { CALL_OUT_ICONS, EMPTY_TABLE, LANGUAGE_IDS, LANGUAGES, RICH_PREFIX, calloutGlyph, initialHtml, safeBlockColor, safeLanguage, sanitizeNodes, tableDataFromBlock } from '@/components/block-editor/content';
-import { blankElement, createBlock } from '@/components/block-editor/block-factory';
+import { CALL_OUT_ICONS, EMPTY_TABLE, LANGUAGE_IDS, LANGUAGES, RICH_PREFIX, TABLE_LIMITS, calloutGlyph, codeBlockText, initialHtml, normalizeTableData, safeBlockColor, safeLanguage, sanitizeNodes, tableDataFromBlock, type EditorTableData } from '@/components/block-editor/content';
+import { blankElement, createBlock, createTaskCheckbox } from '@/components/block-editor/block-factory';
 import { blockFromListItem, convertListItemsToList, listItemContent, mergeAdjacentLists, replaceSelectedListItems } from '@/components/block-editor/list-transformations';
-import { getBlockImage, saveBlockImage } from '@/lib/block-images';
+import { captureDocumentSelection, createDocumentHistory, restoreDocumentSelection } from '@/components/block-editor/history';
+import { getBlockImage, retainBlockImage, saveBlockImage } from '@/lib/block-images';
 
-const props = defineProps<{ modelValue: string; pageId: string; placeholder?: string }>();
+const props = defineProps<{ modelValue: string; pageId: string; placeholder?: string; documentControls?: boolean }>();
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
 
 const editor = ref<HTMLElement | null>(null);
@@ -43,9 +43,16 @@ const draggedBlock = ref<HTMLElement | null>(null);
 const blockContextMenuOpen = ref(false);
 const contextTargetBlock = ref<HTMLElement | null>(null);
 const blockContextMenuId = `block-context-${props.pageId}-${Math.random().toString(36).slice(2, 8)}`;
-const blockContextMenuItems: readonly MenuItem[] = [
-  { id: 'delete-block', label: 'Eliminar bloque', icon: Trash2, destructive: true },
-];
+const blockContextMenuItems = computed<readonly MenuItem[]>(() => {
+  const block = contextTargetBlock.value ?? hoveredBlock.value;
+  return [
+    ...(block?.matches('pre, .knote-callout, .knote-image-block') ? [{ id: 'settings', label: 'Configurar bloque' }] : []),
+    { id: 'duplicate', label: 'Duplicar', icon: Copy },
+    { id: 'move-up', label: 'Mover arriba', icon: ArrowUp, disabled: !block?.previousElementSibling },
+    { id: 'move-down', label: 'Mover abajo', icon: ArrowDown, disabled: !block?.nextElementSibling },
+    { id: 'delete-block', label: 'Eliminar bloque', icon: Trash2, destructive: true },
+  ];
+});
 const insertionAnchor = ref<HTMLElement | null>(null);
 const imagePickerOpen = ref(false);
 const imagePickerPosition = ref({ left: '0px', top: '0px' });
@@ -72,14 +79,26 @@ const imageResizeLabels: Record<(typeof imageResizeDirections)[number], string> 
   sw: 'Cambiar tamaño desde abajo a la izquierda', w: 'Cambiar tamaño desde la izquierda',
 };
 const tableApps = new Map<HTMLElement, ReturnType<typeof createApp>>();
+let nextTableId = 0;
 let savedRange: Range | null = null;
-let savedSelectionText = '';
 let savedSelectedBlocks: HTMLElement[] = [];
 let lastModelValue = props.modelValue;
+let history = createDocumentHistory(props.modelValue);
+const undoAvailable = ref(false);
+const redoAvailable = ref(false);
+const emptyDocument = ref(true);
+let slashState: { block: HTMLElement; query: string } | null = null;
+let composing = false;
+let renderingVersion = false;
 let selectionFrame = 0;
-const imageObjectUrls = new Set<string>();
+const imageObjectUrls = new Map<string, string>();
+const imageLoads = new Map<string, Promise<string | null>>();
+const retainedImages = new Map<string, () => void>();
+let imageRequestVersion = 0;
+const imageUploading = ref(false);
 interface BlockPointerDragState { pointerId: number; block: HTMLElement; startX: number; startY: number }
 let blockPointerDrag: BlockPointerDragState | null = null;
+let suppressBlockClickUntil = 0;
 let dropPlaceholder: HTMLElement | null = null;
 let blockDragPreview: HTMLElement | null = null;
 let dropAnchorTarget: HTMLElement | null = null;
@@ -122,22 +141,28 @@ const formatItems: readonly MenuItem[] = [
   { id: 'group:format-columns', type: 'submenu', label: 'Columnas', icon: Columns3, children: columnItems },
 ];
 const slashBlockGroups: readonly CommandGroup[] = [{
-  id: 'insert-blocks', label: 'Bloques', items: [
+  id: 'insert-text', label: 'Texto y listas', items: [
     { id: 'block:paragraph', label: 'Texto', keywords: ['párrafo', 'normal'], icon: Type },
     ...[1, 2, 3, 4].map((level) => ({ id: `block:heading${level}`, label: `Encabezado ${level}`, keywords: ['título'], icon: Type })),
     { id: 'block:bullet', label: 'Lista con viñetas', keywords: ['lista', 'puntos'], icon: List },
     { id: 'block:numbered', label: 'Lista numerada', keywords: ['lista', 'orden'], icon: ListOrdered },
     { id: 'block:task', label: 'Lista de tareas', keywords: ['checkbox', 'pendientes'], icon: ListTodo },
-    { id: 'block:toggle', label: 'Lista desplegable', keywords: ['plegable', 'toggle'], icon: ChevronDown },
     { id: 'block:quote', label: 'Cita', keywords: ['bloque de cita'], icon: Quote },
+    { id: 'block:highlight', label: 'Destacado', keywords: ['resaltar', 'marca'], icon: Highlighter },
+  ],
+}, {
+  id: 'insert-content', label: 'Contenido', items: [
     { id: 'block:callout-icon', label: 'Cita destacada con icono', keywords: ['aviso', 'callout', 'icono'], icon: Quote },
     { id: 'block:callout-plain', label: 'Cita destacada', keywords: ['aviso', 'callout', 'color'], icon: Quote },
-    { id: 'block:highlight', label: 'Destacado', keywords: ['resaltar', 'marca'], icon: Highlighter },
     { id: 'block:table', label: 'Tabla', keywords: ['filas', 'columnas', 'tabla'], icon: TableIcon },
     { id: 'block:code', label: 'Código', keywords: ['programación', 'pre'], icon: Code2 },
-    { id: 'block:divider', label: 'Divisor', keywords: ['línea', 'separador'], icon: Minus },
     { id: 'block:image', label: 'Imagen', keywords: ['foto', 'archivo', 'media'], icon: ImageIcon },
     { id: 'block:equation', label: 'Ecuación en bloque', keywords: ['math', 'fórmula'], icon: Sigma },
+  ],
+}, {
+  id: 'insert-layout', label: 'Estructura', items: [
+    { id: 'block:toggle', label: 'Lista desplegable', keywords: ['plegable', 'toggle'], icon: ChevronDown },
+    { id: 'block:divider', label: 'Divisor', keywords: ['línea', 'separador'], icon: Minus },
     ...[2, 3, 4, 5].map((count) => ({ id: `block:columns:${count}`, label: `${count} columnas`, keywords: ['columnas', 'diseño'], icon: Columns3 })),
   ],
 }];
@@ -153,9 +178,17 @@ function mountTableBlocks(root: HTMLElement): void {
     if (tableApps.has(block)) return;
     const data = tableDataFromBlock(block);
     block.replaceChildren();
-    block.dataset.caption = data.caption;
+    block.contentEditable = 'false';
     block.dataset.knoteTable = JSON.stringify(data);
-    const app = createApp(TableBlockEditor, { model: data, onChange: () => emitDocument() });
+    const id = `table-${props.pageId}-${++nextTableId}`;
+    const app = createApp(TableBlockEditor, {
+      id,
+      model: data,
+      onChange: (value: EditorTableData, group?: string) => {
+        block.dataset.knoteTable = JSON.stringify(value);
+        emitDocument(false, group ? `${id}-${group}` : '');
+      },
+    });
     app.mount(block);
     tableApps.set(block, app);
   });
@@ -176,7 +209,8 @@ function directBlock(node: Node | null): HTMLElement | null {
     // manager for every line and made dragging/deleting a list unpredictable.
     if (element instanceof HTMLLIElement && element.parentElement
       && ['UL', 'OL'].includes(element.parentElement.tagName)) return element.parentElement;
-    if (element.tagName === 'P' && isBlankParagraph(element)) return null;
+    const figure = element.closest<HTMLElement>('figure.knote-image-block');
+    if (figure && root.contains(figure)) return figure;
     if (['P', 'H1', 'H2', 'H3', 'H4', 'UL', 'OL', 'BLOCKQUOTE', 'PRE', 'HR', 'DETAILS', 'FIGURE'].includes(element.tagName)) return element;
     if (element instanceof HTMLDivElement && (element.classList.contains('knote-table-block') || element.classList.contains('knote-preview-columns') || element.classList.contains('knote-equation'))) return element;
     if (element.parentElement === root && element.tagName !== 'DIV') return element;
@@ -256,10 +290,8 @@ function rememberSelection(allowCollapsed = true): void {
   if (range.collapsed && (!allowCollapsed || formatBlocksOpen.value || linkEditorOpen.value)) return;
   savedRange = range.cloneRange();
   if (!range.collapsed && selection.toString().trim()) {
-    savedSelectionText = selection.toString();
-    savedSelectedBlocks = resolveSelectedBlocks(root, range, savedSelectionText);
+    savedSelectedBlocks = resolveSelectedBlocks(root, range);
   } else {
-    savedSelectionText = '';
     savedSelectedBlocks = [];
   }
 }
@@ -307,11 +339,12 @@ function hasVisibleEditorText(value: string | null | undefined): boolean {
   return Boolean(value?.replace(/[\s\u00a0\u200b\ufeff]/g, ''));
 }
 function hasMeaningfulContent(root: HTMLElement): boolean {
-  if (hasVisibleEditorText(root.innerText)) return true;
+  if (hasVisibleEditorText(root.textContent)) return true;
   return Array.from(root.children).some((child) => !isBlankParagraph(child as HTMLElement));
 }
 function updateEditorPlaceholder(root: HTMLElement): void {
   const isBlank = !hasMeaningfulContent(root);
+  emptyDocument.value = isBlank;
   root.dataset.blank = String(isBlank);
   Array.from(root.children).forEach((child) => child.removeAttribute('data-knote-editor-placeholder'));
   if (!isBlank) return;
@@ -350,20 +383,37 @@ function bookmarkEditorSelection(root: HTMLElement): () => void {
     selection.addRange(restored);
   };
 }
+const editorContainers = '.knote-preview-column, details > div';
+const plainEditorDiv = 'div:not(.knote-callout, .knote-table-block, .knote-preview-columns, .knote-equation)';
+const inlineEditorNode = 'a, span, strong, b, em, i, u, s, del, strike, code, mark, img, br';
+
 function normalizeEditorDom(root: HTMLElement): void {
-  const restoreSelection = bookmarkEditorSelection(root);
+  const containers = [root, ...root.querySelectorAll<HTMLElement>(editorContainers)];
+  const isInlineNode = (child: Node) => (child.nodeType === Node.TEXT_NODE && hasVisibleEditorText(child.textContent))
+    || (child instanceof HTMLElement && child.matches(inlineEditorNode));
+  const needsRepair = containers.some((container) => Array.from(container.childNodes).some((child) =>
+    (child instanceof HTMLElement && child.matches(plainEditorDiv)) || isInlineNode(child),
+  ));
+  const restoreSelection = needsRepair ? bookmarkEditorSelection(root) : () => undefined;
   try {
-    Array.from(root.children).forEach((child) => {
-      if (child.tagName !== 'DIV' || child.classList.contains('knote-callout') || child.classList.contains('knote-table-block') || child.classList.contains('knote-preview-columns') || child.classList.contains('knote-equation')) return;
-      const wrapsBlocks = Array.from(child.children).some((nested) => /^(P|H1|H2|H3|H4|UL|OL|BLOCKQUOTE|PRE|DETAILS|FIGURE|HR)$/.test(nested.tagName));
-      if (wrapsBlocks) child.replaceWith(...Array.from(child.childNodes));
-      else {
-        const paragraph = document.createElement('p');
-        paragraph.replaceChildren(...Array.from(child.childNodes));
-        if (!paragraph.childNodes.length) paragraph.append(document.createElement('br'));
-        child.replaceWith(paragraph);
+    for (const container of containers) {
+      let paragraph: HTMLElement | null = null;
+      for (const child of Array.from(container.childNodes)) {
+        if (child instanceof HTMLElement && child.matches(plainEditorDiv)) {
+          paragraph = null;
+          const wrapsBlocks = Boolean(child.querySelector(':scope > :is(p, h1, h2, h3, h4, ul, ol, blockquote, pre, details, figure, hr, div)'));
+          if (wrapsBlocks) child.replaceWith(...Array.from(child.childNodes));
+          else replaceTag(child, 'p');
+        } else if (isInlineNode(child)) {
+          if (!paragraph) {
+            paragraph = document.createElement('p');
+            container.insertBefore(paragraph, child);
+          }
+          paragraph.append(child);
+        } else if (child.nodeType !== Node.COMMENT_NODE) paragraph = null;
       }
-    });
+      if (!container.firstElementChild) container.append(blankElement('p'));
+    }
     root.querySelectorAll<HTMLElement>('.knote-callout').forEach((callout) => {
       let body = callout.querySelector<HTMLElement>(':scope > p');
       if (!body) { body = blankElement('p'); callout.append(body); }
@@ -375,17 +425,10 @@ function normalizeEditorDom(root: HTMLElement): void {
     root.querySelectorAll<HTMLElement>('details').forEach((details) => {
       let summary = details.querySelector<HTMLElement>(':scope > summary');
       if (!summary) { summary = document.createElement('summary'); details.prepend(summary); }
-      if (!summary.textContent?.trim()) summary.textContent = 'Mostrar contenido';
+      if (!summary.childNodes.length) summary.append(document.createElement('br'));
     });
     root.querySelectorAll<HTMLElement>('figure.knote-image-block').forEach((figure) => { if (!figure.querySelector('img')) figure.remove(); });
     root.querySelectorAll<HTMLElement>('ul, ol').forEach((list) => { if (!list.querySelector(':scope > li')) list.remove(); });
-    Array.from(root.children).forEach((child) => {
-      const previous = child.previousElementSibling;
-      if (previous && previous.tagName === child.tagName && ['UL', 'OL'].includes(child.tagName)) {
-        previous.append(...Array.from(child.children));
-        child.remove();
-      }
-    });
   } finally {
     restoreSelection();
   }
@@ -400,7 +443,6 @@ function updateSelectionToolbar(): void {
   if (range.collapsed || !selectedText.trim()) {
     if (!formatBlocksOpen.value && !linkEditorOpen.value) {
       savedRange = range.cloneRange();
-      savedSelectionText = '';
       savedSelectedBlocks = [];
     }
     selectionOpen.value = false;
@@ -408,8 +450,7 @@ function updateSelectionToolbar(): void {
     return;
   }
   savedRange = range.cloneRange();
-  savedSelectionText = selectedText;
-  savedSelectedBlocks = resolveSelectedBlocks(root, range, selectedText);
+  savedSelectedBlocks = resolveSelectedBlocks(root, range);
   const rects = Array.from(range.getClientRects()).filter((rect) => rect.width || rect.height);
   const rect = rects[rects.length - 1] || range.getBoundingClientRect();
   const viewportPadding = 8;
@@ -443,40 +484,57 @@ function updateSelectionToolbar(): void {
   };
   selectionOpen.value = true;
 }
-function emitDocument(normalize = true): void {
+function updateHistoryControls(): void {
+  undoAvailable.value = history.canUndo();
+  redoAvailable.value = history.canRedo();
+}
+function emitDocument(normalize = true, group = ''): void {
   const root = rootElement();
-  if (!root) return;
+  if (!root || composing || renderingVersion) return;
   if (normalize) normalizeEditorDom(root);
   if ((activeCodeBlock.value && !root.contains(activeCodeBlock.value))
     || (activeCallout.value && !root.contains(activeCallout.value))
     || (activeImage.value && !root.contains(activeImage.value))) clearActiveComponentSettings();
   mountTableBlocks(root);
   const contentNodes = Array.from(root.childNodes).filter((node) =>
-    !(node instanceof HTMLElement && node.tagName === 'P' && isBlankParagraph(node))
-      && !(node.nodeType === Node.TEXT_NODE && !hasVisibleEditorText(node.textContent)),
+    node instanceof HTMLElement || (node.nodeType === Node.TEXT_NODE && hasVisibleEditorText(node.textContent)),
   );
-  const hasContent = contentNodes.some((node) => node instanceof HTMLElement
-    ? !(node.tagName === 'P' && isBlankParagraph(node))
-    : hasVisibleEditorText(node.textContent));
-  const html = hasContent ? sanitizeNodes(contentNodes) : '';
+  const html = contentNodes.length > 1 || hasMeaningfulContent(root) ? sanitizeNodes(contentNodes) : '';
   updateEditorPlaceholder(root);
-  lastModelValue = RICH_PREFIX + html;
-  emit('update:modelValue', lastModelValue);
+  const value = RICH_PREFIX + html;
+  if (value === lastModelValue) return;
+  history.record(value, captureDocumentSelection(root), group);
+  updateHistoryControls();
+  lastModelValue = value;
+  emit('update:modelValue', value);
+}
+function retainImage(id: string): void {
+  if (!retainedImages.has(id)) retainedImages.set(id, retainBlockImage(id));
+}
+function loadImageUrl(id: string, root: HTMLElement): Promise<string | null> {
+  const url = imageObjectUrls.get(id);
+  if (url) return Promise.resolve(url);
+  const pending = imageLoads.get(id);
+  if (pending) return pending;
+  const load = getBlockImage(id).then((asset) => {
+    if (!asset || !root.isConnected) return null;
+    const objectUrl = URL.createObjectURL(asset);
+    imageObjectUrls.set(id, objectUrl);
+    return objectUrl;
+  }).catch(() => null).finally(() => imageLoads.delete(id));
+  imageLoads.set(id, load);
+  return load;
 }
 async function hydrateImageAssets(root: HTMLElement): Promise<void> {
   const images = Array.from(root.querySelectorAll<HTMLImageElement>('img[data-asset-id]'));
   await Promise.all(images.map(async (image) => {
     const id = image.dataset.assetId;
     if (!id || image.src.startsWith('blob:')) return;
-    try {
-      const asset = await getBlockImage(id);
-      if (!asset || !root.contains(image)) return;
-      const objectUrl = URL.createObjectURL(asset);
-      imageObjectUrls.add(objectUrl);
-      image.src = objectUrl;
-    } catch { /* Keep the block in place when a local asset is unavailable. */ }
+    retainImage(id);
+    const url = await loadImageUrl(id, root);
+    if (url && root.contains(image)) image.src = url;
   }));
-  scheduleSelectionUpdate();
+  if (root.isConnected) scheduleSelectionUpdate();
 }
 function requestImageInsertion(anchor: HTMLElement | null): void {
   insertionAnchor.value = anchor;
@@ -490,7 +548,7 @@ function requestImageInsertion(anchor: HTMLElement | null): void {
 }
 function insertImageFile(file: File): void {
   const root = rootElement();
-  if (!root) return;
+  if (!root || imageUploading.value) return;
   if (!file.type.startsWith('image/')) {
     imageError.value = 'Elige un archivo de imagen.';
     imagePickerOpen.value = true;
@@ -501,12 +559,22 @@ function insertImageFile(file: File): void {
     imagePickerOpen.value = true;
     return;
   }
+  const originalAnchor = insertionAnchor.value;
+  const request = ++imageRequestVersion;
+  imageUploading.value = true;
   void (async () => {
     try {
       const optimizedImage = await optimizeEditorImage(file);
-      const id = await saveBlockImage(optimizedImage);
+      if (!root.isConnected || request !== imageRequestVersion) return;
+      const id = crypto.randomUUID();
+      const release = retainBlockImage(id);
+      try {
+        await saveBlockImage(optimizedImage, id);
+        if (!root.isConnected || request !== imageRequestVersion) return;
+        retainImage(id);
+      } finally { release(); }
       const src = URL.createObjectURL(optimizedImage);
-      imageObjectUrls.add(src);
+      imageObjectUrls.set(id, src);
       const figure = document.createElement('figure');
       figure.className = 'knote-image-block';
       figure.dataset.width = '100';
@@ -524,7 +592,7 @@ function insertImageFile(file: File): void {
       caption.dataset.placeholder = 'Añade un pie de foto…';
       figure.append(image, caption);
 
-      let anchor = insertionAnchor.value;
+      let anchor = originalAnchor;
       if (anchor instanceof HTMLLIElement && anchor.parentElement && ['UL', 'OL'].includes(anchor.parentElement.tagName)) anchor = anchor.parentElement;
       if (anchor && !root.contains(anchor)) anchor = null;
       const trailingParagraph = blankElement('p');
@@ -541,8 +609,11 @@ function insertImageFile(file: File): void {
       emitDocument();
       scheduleSelectionUpdate();
     } catch (error) {
+      if (!root.isConnected || request !== imageRequestVersion) return;
       imagePickerOpen.value = true;
       imageError.value = error instanceof Error ? `No se pudo insertar la imagen: ${error.message}` : 'No se pudo guardar la imagen en este dispositivo.';
+    } finally {
+      if (request === imageRequestVersion) imageUploading.value = false;
     }
   })();
 }
@@ -580,6 +651,13 @@ async function optimizeEditorImage(file: File): Promise<Blob> {
 function handleImageSelection(files: readonly File[]): void {
   selectedImageFiles.value = files;
   if (files[0]) insertImageFile(files[0]);
+}
+function cancelImageInsertion(): void {
+  imageRequestVersion += 1;
+  imageUploading.value = false;
+  imagePickerOpen.value = false;
+  insertionAnchor.value = null;
+  selectedImageFiles.value = [];
 }
 function insertBlockAt(anchor: HTMLElement | null, id: string): void {
   const root = rootElement();
@@ -653,7 +731,22 @@ function blockActionsAt(block: HTMLElement): { left: string; right?: string; top
   return { left: `${left}px`, top: `${top}px` };
 }
 function handleBlockContextSelection(selection: MenuSelection): void {
+  const block = contextTargetBlock.value ?? hoveredBlock.value;
+  const root = rootElement();
+  if (!block || !root?.contains(block)) return;
   if (selection.id === 'delete-block') deleteContextTargetBlock();
+  if (selection.id === 'move-up' || selection.id === 'move-down') moveBlockByKeyboard(selection.id === 'move-up' ? -1 : 1, block);
+  if (selection.id === 'settings') showComponentSettings(block);
+  if (selection.id === 'duplicate') {
+    const template = document.createElement('template');
+    template.innerHTML = sanitizeNodes([block]);
+    const copy = template.content.firstElementChild as HTMLElement | null;
+    if (!copy) return;
+    block.after(copy);
+    showBlockActions(copy);
+    emitDocument();
+    void hydrateImageAssets(root);
+  }
 }
 function rememberBlockContextTarget(): void {
   contextTargetBlock.value = hoveredBlock.value;
@@ -689,20 +782,26 @@ function deleteContextTargetBlock(): void {
   emitDocument();
   scheduleSelectionUpdate();
 }
-function openBlockMenu(): void {
-  const block = hoveredBlock.value;
+function openBlockMenu(event: MouseEvent): void {
+  const trigger = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+  const block = hoveredBlock.value ?? editor.value?.lastElementChild as HTMLElement | null;
   if (!block) return;
+  if (slashState) cancelSlashMenu(false);
   insertionAnchor.value = block;
-  const rect = block.getBoundingClientRect();
+  const rect = (trigger?.closest('.knote-document-controls') ? trigger : block).getBoundingClientRect();
   const bounds = shell.value?.getBoundingClientRect();
   const width = shell.value?.clientWidth || 320;
-  blockMenuPosition.value = {
-    left: `${Math.max(0, Math.min(width - 320, rect.left - (bounds?.left || 0)))}px`,
-    top: `${Math.max(0, rect.bottom - (bounds?.top || 0) + 5)}px`,
-  };
+  blockMenuPosition.value = menuPosition(rect, bounds, width);
   blockMenuQuery.value = '';
   blockMenuOpen.value = true;
   void nextTick(() => shell.value?.querySelector<HTMLElement>('.knote-block-insert-menu [data-balsa="command-menu"] input')?.focus({ preventScroll: true }));
+}
+function menuPosition(rect: DOMRect, bounds: DOMRect | undefined, width: number): { left: string; top: string } {
+  const menuHeight = Math.min(360, window.innerHeight * .55);
+  const showAbove = window.innerHeight - rect.bottom < menuHeight && rect.top > menuHeight;
+  const left = Math.max(4, Math.min(width - Math.min(320, width - 8) - 4, rect.left - (bounds?.left ?? 0)));
+  const top = (showAbove ? rect.top - menuHeight : rect.bottom) - (bounds?.top ?? 0) + 5;
+  return { left: `${left}px`, top: `${top}px` };
 }
 function handleBlockMenuSelection(item: CommandItem): void {
   if (item.id.startsWith('block:')) insertBlockAt(insertionAnchor.value, item.id);
@@ -754,11 +853,23 @@ function applyImageResize(event: PointerEvent): void {
     ? Math.max(0, Math.min(state.parentWidth - nextWidth, state.startOffset + state.startWidth - nextWidth))
     : state.startOffset;
   const offsetPercent = Math.min(100 - widthPercent, Math.max(0, Math.round((nextOffset / state.parentWidth) * 1000) / 10));
-  state.figure.dataset.width = String(widthPercent);
-  state.figure.dataset.offset = String(offsetPercent);
-  state.figure.style.setProperty('--knote-image-width', `${widthPercent}%`);
-  state.figure.style.setProperty('--knote-image-offset', `${offsetPercent}%`);
-  imageResizePosition.value = imageResizeHandlesAt(state.figure);
+  setImageDimensions(state.figure, widthPercent, offsetPercent);
+}
+function setImageDimensions(figure: HTMLElement, width: number, offset: number): void {
+  figure.dataset.width = String(width);
+  figure.dataset.offset = String(offset);
+  figure.style.setProperty('--knote-image-width', `${width}%`);
+  figure.style.setProperty('--knote-image-offset', `${offset}%`);
+  imageResizePosition.value = imageResizeHandlesAt(figure);
+}
+function resizeImageWithKeyboard(event: KeyboardEvent): void {
+  const figure = activeImage.value;
+  if (!figure || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+  event.preventDefault();
+  const direction = event.key === 'ArrowLeft' || event.key === 'ArrowDown' ? -1 : 1;
+  const width = Math.max(20, Math.min(100, Number(figure.dataset.width || 100) + direction * (event.shiftKey ? 10 : 2)));
+  setImageDimensions(figure, width, Math.min(Number(figure.dataset.offset || 0), 100 - width));
+  emitDocument(false);
 }
 function finishImageResize(event?: PointerEvent): void {
   const state = imageResizeState;
@@ -767,6 +878,13 @@ function finishImageResize(event?: PointerEvent): void {
   document.removeEventListener('pointermove', applyImageResize);
   document.removeEventListener('pointerup', finishImageResize);
   document.removeEventListener('pointercancel', finishImageResize);
+  if (event?.type === 'pointercancel') {
+    const width = state.startWidth / state.parentWidth * 100;
+    const offset = state.startOffset / state.parentWidth * 100;
+    setImageDimensions(state.figure, width, offset);
+    scheduleSelectionUpdate();
+    return;
+  }
   emitDocument();
 }
 function startImageResize(event: PointerEvent, direction: (typeof imageResizeDirections)[number]): void {
@@ -808,6 +926,11 @@ function handleComponentContextMenu(event: MouseEvent): void {
   const target = event.target instanceof Element ? event.target : null;
   const root = rootElement();
   if (!target || !root) return;
+  if (showComponentSettings(target)) event.preventDefault();
+}
+function showComponentSettings(target: Element): boolean {
+  const root = rootElement();
+  if (!root) return false;
   const code = target.closest('pre');
   const callout = target.closest('.knote-callout');
   const image = target.closest('figure.knote-image-block');
@@ -816,11 +939,9 @@ function handleComponentContextMenu(event: MouseEvent): void {
   const nextImage = image instanceof HTMLElement && root.contains(image) ? image : null;
   if (!nextCode && !nextCallout && !nextImage) {
     if (shell.value?.contains(target)) clearActiveComponentSettings();
-    return;
+    return false;
   }
 
-  event.preventDefault();
-  event.stopPropagation();
   activeCodeBlock.value = nextCode;
   activeCallout.value = nextCallout;
   activeImage.value = nextImage;
@@ -837,6 +958,7 @@ function handleComponentContextMenu(event: MouseEvent): void {
     imageToolbarPosition.value = positionInsideShell(nextImage, -48);
     imageResizePosition.value = imageResizeHandlesAt(nextImage);
   }
+  return true;
 }
 function handleEditorPointerOver(event: PointerEvent): void {
   const target = event.target;
@@ -863,9 +985,12 @@ function handleEditorPointerLeave(event: PointerEvent): void {
 function handleEditorPointerMove(event: PointerEvent): void {
   if (event.pointerType === 'touch') return;
   const target = event.target;
-  if (target instanceof Element && target.closest('.knote-editor-control')) return;
+  if (target instanceof Element && (target.closest('.knote-editor-control, [data-balsa="menu-list"]') || blockContextMenuOpen.value || blockMenuOpen.value)) return;
   if (editorHitAreaContains(event.clientX)) {
-    const block = nearestBlockAtY(event.clientY);
+    const root = editor.value;
+    const block = target instanceof Element && root?.contains(target)
+      ? blockAtPointer(target, event.clientY)
+      : nearestBlockAtY(event.clientY);
     if (block) { showBlockActions(block); return; }
   }
   if (editor.value !== document.activeElement && !blockContextMenuOpen.value && !blockMenuOpen.value) hoveredBlock.value = null;
@@ -1018,6 +1143,7 @@ function handleBlockPointerUp(event: PointerEvent): void {
   if (!state || event.pointerId !== state.pointerId) return;
   const cancelled = event.type === 'pointercancel';
   const dragged = draggedBlock.value;
+  if (dragged) suppressBlockClickUntil = performance.now() + 350;
   if (!cancelled && dragged && editorHitAreaContains(event.clientX)) {
     const target = dropTargetAtPointer(event.clientX, event.clientY);
     if (target && canDropBlock(dragged, target)) {
@@ -1076,22 +1202,30 @@ function handleEditorDrop(event: DragEvent): void {
   emitDocument();
   scheduleSelectionUpdate();
 }
-function moveBlockByKeyboard(direction: -1 | 1): void {
-  const block = hoveredBlock.value;
+function moveBlockByKeyboard(direction: -1 | 1, block = hoveredBlock.value): void {
   if (!block?.parentElement) return;
   const neighbor = direction < 0 ? block.previousElementSibling : block.nextElementSibling;
   if (!neighbor) return;
   if (direction < 0) neighbor.before(block); else neighbor.after(block);
+  hoveredBlock.value = block;
   blockActionsPosition.value = blockActionsAt(block);
   emitDocument();
   scheduleSelectionUpdate();
 }
 function handleBlockHandlePointerDown(event: PointerEvent): void {
+  suppressBlockClickUntil = 0;
   rememberBlockContextTarget();
   beginBlockPointerDrag(event);
 }
+function handleBlockHandleClick(event: MouseEvent): void {
+  if (performance.now() >= suppressBlockClickUntil) return;
+  event.preventDefault();
+  event.stopPropagation();
+}
 async function copyCode(): Promise<void> {
-  const code = activeCodeBlock.value?.querySelector('code')?.innerText || activeCodeBlock.value?.innerText || '';
+  const block = activeCodeBlock.value;
+  if (!block) return;
+  const code = codeBlockText(block);
   if (!code) return;
   try {
     await navigator.clipboard.writeText(code);
@@ -1114,26 +1248,7 @@ function languageLabel(block: HTMLElement | null): string {
   const id = safeLanguage(block?.dataset.language || null);
   return LANGUAGES.find(([candidate]) => candidate === id)?.[1] || 'Texto sin formato';
 }
-function blocksContainingSelection(root: HTMLElement, selectedText: string): HTMLElement[] {
-  const normalizedSelection = selectedText.replace(/\s+/g, ' ').trim();
-  if (!normalizedSelection) return [];
-  const matches: Text[] = [];
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  let textNode = walker.nextNode();
-  while (textNode) {
-    if (textNode.textContent?.replace(/\s+/g, ' ').includes(normalizedSelection)) matches.push(textNode as Text);
-    textNode = walker.nextNode();
-  }
-  if (matches.length !== 1) return [];
-  const element = matches[0].parentElement;
-  const item = element?.closest('li');
-  if (item instanceof HTMLLIElement && root.contains(item)) return [item];
-  const block = directBlock(matches[0]);
-  return block ? [block] : [];
-}
-function resolveSelectedBlocks(root: HTMLElement, range: Range, selectedText: string): HTMLElement[] {
-  const textMatch = blocksContainingSelection(root, selectedText);
-  if (textMatch.length) return textMatch;
+function resolveSelectedBlocks(root: HTMLElement, range: Range): HTMLElement[] {
   const listItemFor = (node: Node): HTMLLIElement | null => {
     const element = node instanceof Element ? node : node.parentElement;
     const item = element?.closest('li');
@@ -1148,50 +1263,62 @@ function resolveSelectedBlocks(root: HTMLElement, range: Range, selectedText: st
     const end = items.indexOf(endItem);
     if (start >= 0 && end >= 0) return items.slice(Math.min(start, end), Math.max(start, end) + 1);
   }
-  if (startItem) return [startItem];
-  if (endItem) return [endItem];
-  const selected = Array.from(root.querySelectorAll('p, h1, h2, h3, h4, li, blockquote, pre, hr, details, .knote-table-block, .knote-preview-columns, .knote-equation')).filter((child) => {
-    try { return range.intersectsNode(child); } catch { return false; }
-  }) as HTMLElement[];
-  return selected.length ? selected : [directBlock(range.startContainer)].filter((node): node is HTMLElement => Boolean(node));
+  const start = directBlock(range.startContainer);
+  const end = directBlock(range.endContainer);
+  if (start && start === end) return [start];
+  const container = start?.parentElement === end?.parentElement ? start?.parentElement ?? root : root;
+  return Array.from(container.children).filter((child): child is HTMLElement => child instanceof HTMLElement && range.intersectsNode(child));
 }
 function getSelectedBlocks(): HTMLElement[] {
   const root = rootElement();
   const range = savedRange && restoreSelection() ? savedRange : null;
   if (!root || !range) return [];
-  const rangeText = range.toString();
-  const selectedText = rangeText.trim() ? rangeText : savedSelectionText;
-  const exactTextMatch = blocksContainingSelection(root, selectedText);
-  if (exactTextMatch.length) return exactTextMatch;
   const captured = savedSelectedBlocks.filter((block) => root.contains(block));
   if (captured.length) return captured;
-  return resolveSelectedBlocks(root, range, selectedText);
+  return resolveSelectedBlocks(root, range);
 }
 function wrapSelected(tag: string, attributes: Record<string, string> = {}): void {
   const range = restoreSelection();
   if (!range || range.collapsed) return;
-  const wrapper = document.createElement(tag);
-  Object.entries(attributes).forEach(([key, value]) => wrapper.setAttribute(key, value));
-  try {
-    wrapper.append(range.extractContents());
-    range.insertNode(wrapper);
-    const next = document.createRange();
-    next.selectNodeContents(wrapper);
-    savedRange = next.cloneRange();
-    restoreSelection();
-  } catch {
-    return;
+  const root = rootElement();
+  if (!root) return;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const segments: { node: Text; start: number; end: number }[] = [];
+  while (walker.nextNode()) {
+    const node = walker.currentNode as Text;
+    if (!range.intersectsNode(node) || node.parentElement?.closest('[contenteditable="false"], pre')) continue;
+    const start = range.startContainer === node ? range.startOffset : 0;
+    const end = range.endContainer === node ? range.endOffset : node.length;
+    if (start < end) segments.push({ node, start, end });
   }
+  const wrappers: HTMLElement[] = [];
+  for (const { node, start, end } of segments) {
+    if (tag === 'a' && node.parentElement?.closest('a')) continue;
+    const selected = document.createRange();
+    selected.setStart(node, start);
+    selected.setEnd(node, end);
+    const wrapper = document.createElement(tag);
+    for (const [key, value] of Object.entries(attributes)) wrapper.setAttribute(key, value);
+    selected.surroundContents(wrapper);
+    wrappers.push(wrapper);
+  }
+  if (!wrappers.length) return;
+  const next = document.createRange();
+  next.setStart(wrappers[0], 0);
+  const last = wrappers[wrappers.length - 1];
+  next.setEnd(last, last.childNodes.length);
+  savedRange = next;
+  restoreSelection();
   emitDocument();
   scheduleSelectionUpdate();
 }
 function insertFragmentAtSelection(fragment: Node): boolean {
   const range = restoreSelection();
   if (!range) return false;
-  range.deleteContents();
   const first = fragment instanceof DocumentFragment ? fragment.firstChild : fragment;
   const last = fragment instanceof DocumentFragment ? fragment.lastChild : fragment;
   if (!first || !last) return false;
+  range.deleteContents();
   range.insertNode(fragment);
   range.setStartAfter(last);
   range.collapse(true);
@@ -1199,7 +1326,6 @@ function insertFragmentAtSelection(fragment: Node): boolean {
   selection?.removeAllRanges();
   selection?.addRange(range);
   savedRange = range.cloneRange();
-  savedSelectionText = '';
   savedSelectedBlocks = [];
   return true;
 }
@@ -1220,18 +1346,14 @@ function unwrapSelectedFormatting(range: Range): void {
 }
 function applyInline(command: 'bold' | 'italic' | 'underline' | 'strikeThrough' | 'removeFormat' | 'hiliteColor' | 'insertHTML', value?: string): void {
   const range = restoreSelection();
-  if (!range || range.collapsed) return;
+  if (!range || range.startContainer.parentElement?.closest('pre')) return;
   if (command === 'insertHTML') wrapSelected('code');
-  else if (command === 'removeFormat') unwrapSelectedFormatting(range);
-  else if (command === 'hiliteColor') {
+  else if (command === 'removeFormat') {
+    if (!range.collapsed && textBlockAt(range.startContainer) === textBlockAt(range.endContainer)) unwrapSelectedFormatting(range);
+  } else if (command === 'hiliteColor') {
     const color = safeBlockColor(value);
-    if (color) wrapSelected('mark', { 'data-knote-color': color, style: `--knote-highlight-color:${color}` });
-  } else {
-    const tag = command === 'bold' ? 'strong'
-      : command === 'italic' ? 'em'
-        : command === 'underline' ? 'u' : 's';
-    wrapSelected(tag);
-  }
+    if (color) wrapSelected('mark', { 'data-knote-color': color, style: '--knote-highlight-color:' + color });
+  } else document.execCommand(command);
   rememberSelection();
   emitDocument();
   scheduleSelectionUpdate();
@@ -1276,20 +1398,32 @@ function startLinkEdit(): void {
   void nextTick(() => document.getElementById(`block-link-${props.pageId}`)?.focus());
 }
 
-function placeCaretAtEnd(target: HTMLElement | null): void {
+function placeCaretAtEnd(target: HTMLElement | null, atStart = false): void {
   const root = rootElement();
   const selection = window.getSelection();
   if (!root || !selection) return;
-  const block = target && root.contains(target) ? target : root.lastElementChild as HTMLElement | null;
+  let block = target && root.contains(target) ? target : root.lastElementChild as HTMLElement | null;
   if (!block) return;
+  if (block.matches('.knote-table-block')) {
+    block.querySelector<HTMLElement>('[data-table-row]')?.focus({ preventScroll: true });
+    return;
+  }
+  if (block instanceof HTMLDetailsElement) block = block.querySelector('summary') ?? block;
+  if (block.matches('.knote-preview-columns')) block = block.querySelector<HTMLElement>('.knote-preview-column > p') ?? block;
+  if (block.matches('ul, ol')) block = block.querySelector<HTMLElement>(':scope > li:last-child') ?? block;
+  if (block.matches('.knote-callout')) block = block.querySelector('p') ?? block;
+  if (block.matches('pre')) block = block.querySelector('code') ?? block;
+  if (block.matches('figure')) block = block.querySelector('figcaption') ?? block;
   const range = document.createRange();
   range.selectNodeContents(block);
-  range.collapse(false);
+  const nestedList = block.querySelector(':scope > :is(ul, ol)');
+  if (nestedList) range.setEndBefore(nestedList);
+  range.collapse(atStart);
+  if (atStart && block.firstChild instanceof HTMLInputElement) range.setStartAfter(block.firstChild);
   root.focus({ preventScroll: true });
   selection.removeAllRanges();
   selection.addRange(range);
   savedRange = range.cloneRange();
-  savedSelectionText = '';
   savedSelectedBlocks = [];
 }
 
@@ -1310,14 +1444,20 @@ function applyBlock(id: string): void {
   const targets = getSelectedBlocks();
   if (!targets.length) return;
   if (id === 'block:image') { requestImageInsertion(targets[0]); return; }
+  if (targets.some((target) => target.matches('figure, .knote-table-block, .knote-preview-columns, details, hr'))) return;
+  if (targets.some((target) => target.matches('ul, ol')) && !['block:paragraph', 'block:bullet', 'block:numbered', 'block:task', 'block:table'].includes(id)) return;
   if (id === 'block:table') {
     if (targets.length === 1 && targets[0].classList.contains('knote-table-block')) return;
     const rows = targets.flatMap((target) => {
       const items = ['UL', 'OL'].includes(target.tagName) ? Array.from(target.querySelectorAll(':scope > li')) : [target];
-      return items.map((item) => [item.textContent?.trim() || '', '', '']);
+      return items.map((item) => [item.textContent || '', '', '']);
     });
+    if (rows.length > TABLE_LIMITS.rows || rows.some(([value]) => value.length > TABLE_LIMITS.cell)) {
+      insertBlockAt(targets[targets.length - 1], 'block:table');
+      return;
+    }
     const tableBlock = createBlock('block:table');
-    tableBlock.dataset.knoteTable = JSON.stringify({ ...EMPTY_TABLE, rows: rows.length ? rows : EMPTY_TABLE.rows.map((row) => [...row]) });
+    tableBlock.dataset.knoteTable = JSON.stringify(normalizeTableData({ ...EMPTY_TABLE, rows: rows.length ? rows : EMPTY_TABLE.rows }));
     targets[0].before(tableBlock);
     targets.forEach((target) => target.remove());
     mountTableBlocks(rootElement()!);
@@ -1333,7 +1473,9 @@ function applyBlock(id: string): void {
     if (id === 'block:bullet' || id === 'block:numbered' || id === 'block:task') {
       focusTarget = convertListItemsToList(listItems, id);
     } else if (id === 'block:divider') {
-      focusTarget = replaceSelectedListItems(listItems, () => [document.createElement('hr'), blankElement('p')]);
+      const lastList = listItems[listItems.length - 1].parentElement;
+      if (lastList) insertBlockAt(lastList, id);
+      return;
     } else if (id === 'block:paragraph' || heading || id === 'block:quote' || id === 'block:callout-icon' || id === 'block:callout-plain' || id === 'block:code' || id === 'block:toggle' || id === 'block:equation' || /^block:columns:[2-5]$/.test(id)) {
       focusTarget = replaceSelectedListItems(listItems, (selected) => selected.flatMap((item) => blockFromListItem(id, item)));
     }
@@ -1360,11 +1502,8 @@ function applyBlock(id: string): void {
         const paragraph = replaceTag(node, 'p');
         focusTarget ??= paragraph;
       } else if (node.tagName === 'UL' || node.tagName === 'OL') {
-        const paragraphs = Array.from(node.querySelectorAll(':scope > li')).map((item) => {
-          const paragraph = document.createElement('p');
-          Array.from(item.childNodes).filter((child) => !(child instanceof HTMLInputElement)).forEach((child) => paragraph.append(child.cloneNode(true)));
-          return paragraph;
-        });
+        const paragraphs = Array.from(node.querySelectorAll<HTMLLIElement>(':scope > li'))
+          .flatMap((item) => blockFromListItem('block:paragraph', item));
         if (!paragraphs.length) paragraphs.push(blankElement('p'));
         node.replaceWith(...paragraphs);
         focusTarget ??= paragraphs[0];
@@ -1396,8 +1535,9 @@ function applyBlock(id: string): void {
           const item = document.createElement('li');
           const content = source.tagName === 'LI' ? Array.from(source.childNodes).filter((child) => !(child instanceof HTMLInputElement)) : Array.from(source.childNodes);
           if (id === 'block:task') {
-            item.dataset.task = 'false';
-            const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.setAttribute('contenteditable', 'false'); item.append(checkbox);
+            const checked = source.querySelector<HTMLInputElement>(':scope > input[type="checkbox"]')?.checked ?? false;
+            item.dataset.task = String(checked);
+            item.append(createTaskCheckbox(checked));
           }
           content.forEach((child) => item.append(child.cloneNode(true)));
           list.append(item);
@@ -1433,11 +1573,11 @@ function applyBlock(id: string): void {
       focusTarget ??= pre;
     });
   } else if (id === 'block:divider') {
-    const first = targets[0];
     const divider = document.createElement('hr');
     const paragraph = blankElement('p');
-    first.replaceWith(divider, paragraph);
-    targets.slice(1).forEach((node) => node.remove());
+    const last = targets[targets.length - 1];
+    if (isBlankParagraph(last)) last.replaceWith(divider, paragraph);
+    else last.after(divider, paragraph);
     focusTarget = paragraph;
   } else if (id === 'block:toggle') {
     targets.forEach((node) => {
@@ -1465,7 +1605,8 @@ function applyBlock(id: string): void {
 function replaceTag(node: HTMLElement, tag: string): HTMLElement {
   if (node.tagName.toLowerCase() === tag) return node;
   const replacement = document.createElement(tag);
-  replacement.innerHTML = node.innerHTML;
+  replacement.append(...node.childNodes);
+  if (!replacement.childNodes.length) replacement.append(document.createElement('br'));
   node.replaceWith(replacement);
   return replacement;
 }
@@ -1479,7 +1620,11 @@ function openSlashMenuFromCaret(): boolean {
   const range = selection.getRangeAt(0);
   if (!range.collapsed || !root.contains(range.startContainer)) return false;
   const block = textBlockAt(range.startContainer);
-  if (!block || !['P', 'DIV'].includes(block.tagName)) return false;
+  if (!block || block.tagName !== 'P' || !block.parentElement?.matches('.knote-block-editor, ' + editorContainers)) return false;
+  const suffix = document.createRange();
+  suffix.selectNodeContents(block);
+  suffix.setStart(range.endContainer, range.endOffset);
+  if (suffix.toString()) return false;
   const prefix = document.createRange();
   prefix.selectNodeContents(block);
   prefix.setEnd(range.startContainer, range.startOffset);
@@ -1498,26 +1643,31 @@ function openSlashMenuFromCaret(): boolean {
 
   const shell = root.parentElement;
   const shellRect = shell?.getBoundingClientRect();
-  const caretRect = caret.getBoundingClientRect();
-  if (shellRect) {
-    const menuWidth = Math.max(0, Math.min(320, shellRect.width - 8));
-    const left = Math.max(4, Math.min(shellRect.width - menuWidth - 4, caretRect.left - shellRect.left));
-    slashMenuPosition.value = { left: `${left}px`, top: `${Math.max(0, caretRect.bottom - shellRect.top + 6)}px` };
-  }
+  if (shellRect) slashMenuPosition.value = menuPosition(block.getBoundingClientRect(), shellRect, shellRect.width);
+  slashState = { block, query: match[1] || '' };
+  blockMenuOpen.value = false;
   slashQuery.value = match[1] || '';
   slashMenuOpen.value = true;
   void nextTick(() => shell?.querySelector<HTMLInputElement>('[data-balsa="command-menu"] input')?.focus({ preventScroll: true }));
   return true;
 }
 function handleSlashBlockSelection(item: CommandItem): void {
-  if (!item.id.startsWith('block:')) return;
+  if (!item.id.startsWith('block:') || !slashState) return;
+  const { block } = slashState;
+  slashState = null;
   slashMenuOpen.value = false;
-  applyBlock(item.id);
+  insertBlockAt(block, item.id);
 }
-function cancelSlashMenu(): void {
+function cancelSlashMenu(restoreFocus = true): void {
+  const state = slashState;
+  slashState = null;
   slashMenuOpen.value = false;
+  const query = slashQuery.value || state?.query || '';
   slashQuery.value = '';
-  void nextTick(() => restoreSelection());
+  if (!state || !editor.value?.contains(state.block)) return;
+  state.block.textContent = '/' + query;
+  if (restoreFocus) placeCaretAtEnd(state.block);
+  emitDocument();
 }
 function applyTypedBlockShortcut(): boolean {
   const root = rootElement();
@@ -1526,7 +1676,7 @@ function applyTypedBlockShortcut(): boolean {
   const range = selection.getRangeAt(0);
   if (!range.collapsed || !root.contains(range.startContainer)) return false;
   const block = textBlockAt(range.startContainer);
-  if (!block || !['P', 'DIV'].includes(block.tagName)) return false;
+  if (!block || block.tagName !== 'P' || !block.parentElement?.matches('.knote-block-editor, ' + editorContainers)) return false;
 
   const suffix = document.createRange();
   suffix.selectNodeContents(block);
@@ -1561,35 +1711,54 @@ function applyTypedBlockShortcut(): boolean {
   applyBlock(blockId);
   return true;
 }
-function handleEditorInput(): void {
+function handleEditorInput(event?: InputEvent): void {
   const root = rootElement();
-  if (!root) return;
-  Array.from(root.childNodes).forEach((node) => {
-    if (node.nodeType === Node.TEXT_NODE && node.textContent?.trim()) {
-      const paragraph = document.createElement('p'); paragraph.textContent = node.textContent; root.replaceChild(paragraph, node);
-    }
-  });
+  if (!root || composing || event?.isComposing || renderingVersion) return;
   normalizeEditorDom(root);
   updateEditorPlaceholder(root);
   rememberSelection();
-  if (openSlashMenuFromCaret()) {
-    emitDocument(false);
+  const typing = !event || event.inputType === 'insertText' || event.inputType === 'insertCompositionText';
+  if (typing && openSlashMenuFromCaret()) {
     selectionOpen.value = false;
     return;
   }
-  if (applyTypedBlockShortcut()) return;
-  emitDocument(false);
+  if (typing && applyTypedBlockShortcut()) return;
+  const type = event?.inputType;
+  const group = type === 'insertText' || type === 'deleteContentBackward' || type === 'deleteContentForward' ? type : '';
+  emitDocument(false, group);
   scheduleSelectionUpdate();
+}
+function finishComposition(): void {
+  composing = false;
+  handleEditorInput();
+}
+function startComposition(): void {
+  if (editor.value) history.remember(captureDocumentSelection(editor.value));
+  composing = true;
 }
 function changeListIndent(item: HTMLLIElement, outdent: boolean): boolean {
   const root = rootElement();
   const list = item.parentElement;
   if (!root || !list || !['UL', 'OL'].includes(list.tagName)) return false;
+  const selection = window.getSelection();
+  const anchor = selection?.anchorNode;
+  const focus = selection?.focusNode;
+  const anchorOffset = selection?.anchorOffset ?? 0;
+  const focusOffset = selection?.focusOffset ?? 0;
 
   if (outdent) {
     const parentItem = list.parentElement;
     const parentList = parentItem?.parentElement;
     if (parentItem?.tagName !== 'LI' || !parentList || !['UL', 'OL'].includes(parentList.tagName)) return false;
+    if (item.nextElementSibling) {
+      const tail = list.cloneNode(false) as HTMLElement;
+      if (list instanceof HTMLOListElement && tail instanceof HTMLOListElement) {
+        const offset = Array.from(list.children).indexOf(item) + 1;
+        tail.start = list.start + (list.reversed ? -offset : offset);
+      }
+      while (item.nextElementSibling) tail.append(item.nextElementSibling);
+      item.append(tail);
+    }
     parentList.insertBefore(item, parentItem.nextSibling);
     if (!list.querySelector(':scope > li')) list.remove();
   } else {
@@ -1603,29 +1772,21 @@ function changeListIndent(item: HTMLLIElement, outdent: boolean): boolean {
     nestedList.append(item);
   }
 
-  const selection = window.getSelection();
-  if (selection?.rangeCount) {
-    const range = selection.getRangeAt(0).cloneRange();
-    if (root.contains(range.startContainer) && root.contains(range.endContainer)) {
-      selection.removeAllRanges();
-      selection.addRange(range);
-      savedRange = range.cloneRange();
-    } else placeCaretAtEnd(item);
+  if (selection && anchor && focus && item.contains(anchor) && item.contains(focus)) {
+    selection.setBaseAndExtent(anchor, anchorOffset, focus, focusOffset);
+    rememberSelection();
   } else placeCaretAtEnd(item);
   emitDocument();
   scheduleSelectionUpdate();
   return true;
 }
 function insertSoftBreak(range: Range): void {
+  if (document.execCommand('insertLineBreak')) return;
   range.deleteContents();
   const lineBreak = document.createElement('br');
   range.insertNode(lineBreak);
   const caret = document.createRange();
   caret.setStartAfter(lineBreak);
-  caret.collapse(true);
-  const trailingBreak = document.createElement('br');
-  caret.insertNode(trailingBreak);
-  caret.setStartBefore(trailingBreak);
   caret.collapse(true);
   const selection = window.getSelection();
   selection?.removeAllRanges();
@@ -1639,6 +1800,21 @@ function caretLineText(block: HTMLElement, range: Range, side: 'before' | 'after
   else part.setStart(range.startContainer, range.startOffset);
   return part.toString();
 }
+function insertCodeText(block: HTMLElement, range: Range, text: string): void {
+  const source = codeBlockText(block);
+  const before = caretLineText(block, range, 'before').length;
+  const throughSelection = document.createRange();
+  throughSelection.selectNodeContents(block);
+  throughSelection.setEnd(range.endContainer, range.endOffset);
+  const end = throughSelection.toString().length;
+  const node = document.createTextNode(source.slice(0, before) + text + source.slice(end));
+  const code = document.createElement('code');
+  code.append(node);
+  block.replaceChildren(code);
+  window.getSelection()?.collapse(node, before + text.length);
+  rememberSelection();
+  emitDocument();
+}
 function insertAfterBlock(block: HTMLElement): HTMLElement {
   const next = block.nextElementSibling as HTMLElement | null;
   const paragraph = next && isBlankParagraph(next) ? next : blankElement('p');
@@ -1649,6 +1825,15 @@ function insertAfterBlock(block: HTMLElement): HTMLElement {
   return paragraph;
 }
 function handleEditorKeydown(event: KeyboardEvent): void {
+  if (event.isComposing || composing || event.defaultPrevented) return;
+  if (event.altKey && event.shiftKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+    const block = directBlock(window.getSelection()?.anchorNode ?? null);
+    if (!block) return;
+    event.preventDefault();
+    moveBlockByKeyboard(event.key === 'ArrowUp' ? -1 : 1, block);
+    placeCaretAtEnd(block);
+    return;
+  }
   if (event.key === 'Backspace') {
     const root = rootElement();
     const selection = window.getSelection();
@@ -1665,7 +1850,7 @@ function handleEditorKeydown(event: KeyboardEvent): void {
       const content = Array.from(item.childNodes).filter((node) => !(node instanceof HTMLInputElement) && node.nodeName !== 'BR' && !(node instanceof HTMLElement && ['UL', 'OL'].includes(node.tagName)));
       const empty = !content.some((node) => hasVisibleEditorText(node.textContent)) && !hasNestedItems;
       const range = selection.getRangeAt(0);
-      const atStart = range.startOffset === 0 || !hasVisibleEditorText(caretLineText(item, range, 'before'));
+      const atStart = !hasVisibleEditorText(caretLineText(item, range, 'before'));
       if (empty && atStart) {
         event.preventDefault();
         if (list.parentElement instanceof HTMLLIElement) {
@@ -1718,20 +1903,20 @@ function handleEditorKeydown(event: KeyboardEvent): void {
     }
 
     const pre = anchor.closest('pre');
-    if (pre instanceof HTMLElement && root.contains(pre) && !event.shiftKey) {
-      if ((event.ctrlKey || event.metaKey) && !range.collapsed) return;
-      const codeRange = range.cloneRange();
-      const before = caretLineText(pre, codeRange, 'before').split('\n').at(-1) || '';
-      const after = caretLineText(pre, codeRange, 'after').split('\n')[0] || '';
-      if (event.ctrlKey || event.metaKey || (!before.trim() && !after.trim())) {
-        event.preventDefault();
+    if (pre instanceof HTMLElement && root.contains(pre) && pre.contains(range.startContainer) && pre.contains(range.endContainer)) {
+      event.preventDefault();
+      if (event.ctrlKey || event.metaKey) {
         insertAfterBlock(pre);
+      } else {
+        insertCodeText(pre, range, '\n');
       }
       return;
     }
 
     const item = anchor.closest('li');
     if (item instanceof HTMLLIElement && root.contains(item) && item.parentElement && ['UL', 'OL'].includes(item.parentElement.tagName)) {
+      const end = range.endContainer instanceof Element ? range.endContainer : range.endContainer.parentElement;
+      if (!range.collapsed && end?.closest('li') !== item) return;
       const list = item.parentElement;
       const task = item.hasAttribute('data-task');
       if (event.shiftKey) {
@@ -1766,15 +1951,13 @@ function handleEditorKeydown(event: KeyboardEvent): void {
         const nextItem = document.createElement('li');
         if (task) {
           nextItem.dataset.task = 'false';
-          const checkbox = document.createElement('input');
-          checkbox.type = 'checkbox';
-          checkbox.setAttribute('contenteditable', 'false');
-          nextItem.append(checkbox);
+          nextItem.append(createTaskCheckbox());
         }
         nextItem.append(tail);
         if (!nextItem.textContent?.trim() && !nextItem.querySelector('ul, ol')) nextItem.append(document.createElement('br'));
+        if (!item.textContent?.trim() && !item.querySelector('br, ul, ol')) item.append(document.createElement('br'));
         item.after(nextItem);
-        placeCaretAtEnd(nextItem);
+        placeCaretAtEnd(nextItem, true);
       }
       emitDocument();
       scheduleSelectionUpdate();
@@ -1784,9 +1967,14 @@ function handleEditorKeydown(event: KeyboardEvent): void {
     const callout = anchor.closest('.knote-callout');
     const quote = anchor.closest('blockquote');
     const emptyQuoteLine = anchor.closest('blockquote p');
-    if (!event.shiftKey && callout instanceof HTMLElement && root.contains(callout) && anchor.closest('p') instanceof HTMLElement && isBlankParagraph(anchor.closest('p') as HTMLElement)) {
+    const calloutLine = anchor.closest('.knote-callout > p');
+    if (callout instanceof HTMLElement && calloutLine instanceof HTMLElement && calloutLine.contains(range.endContainer)) {
       event.preventDefault();
-      insertAfterBlock(callout);
+      if (!event.shiftKey && (event.ctrlKey || event.metaKey || isBlankParagraph(calloutLine))) insertAfterBlock(callout);
+      else {
+        insertSoftBreak(range);
+        emitDocument();
+      }
       return;
     }
     if (!event.shiftKey && quote instanceof HTMLElement && root.contains(quote) && (!quote.textContent?.trim() || (emptyQuoteLine instanceof HTMLElement && isBlankParagraph(emptyQuoteLine)))) {
@@ -1797,14 +1985,16 @@ function handleEditorKeydown(event: KeyboardEvent): void {
 
     const caption = anchor.closest('figcaption');
     const figure = caption?.closest('figure.knote-image-block');
-    if (!event.shiftKey && caption instanceof HTMLElement && figure instanceof HTMLElement && !caption.textContent?.trim()) {
+    const equation = anchor.closest('.knote-equation');
+    if (!event.shiftKey && ((caption instanceof HTMLElement && figure instanceof HTMLElement) || equation instanceof HTMLElement)) {
       event.preventDefault();
-      insertAfterBlock(figure);
+      insertAfterBlock((caption ? figure : equation) as HTMLElement);
       return;
     }
 
     const detailsBody = anchor.closest('details > div');
     if (!event.shiftKey && detailsBody instanceof HTMLElement && root.contains(detailsBody) && !detailsBody.textContent?.trim()) {
+      event.preventDefault();
       event.preventDefault();
       const details = detailsBody.closest('details');
       if (details instanceof HTMLElement) insertAfterBlock(details);
@@ -1816,6 +2006,12 @@ function handleEditorKeydown(event: KeyboardEvent): void {
     const selection = window.getSelection();
     if (!root || !selection?.rangeCount || !selection.getRangeAt(0).collapsed || !root.contains(selection.anchorNode)) return;
     const anchor = selection.anchorNode instanceof HTMLElement ? selection.anchorNode : selection.anchorNode?.parentElement;
+    const codeBlock = anchor?.closest('pre');
+    if (!event.shiftKey && codeBlock instanceof HTMLElement && root.contains(codeBlock)) {
+      event.preventDefault();
+      insertCodeText(codeBlock, selection.getRangeAt(0), '    ');
+      return;
+    }
     const item = anchor?.closest('li');
     if (item && root.contains(item) && changeListIndent(item, event.shiftKey)) event.preventDefault();
     return;
@@ -1823,23 +2019,80 @@ function handleEditorKeydown(event: KeyboardEvent): void {
   if ((event.ctrlKey || event.metaKey) && !event.shiftKey) {
     const key = event.key.toLowerCase();
     const command = key === 'b' ? 'bold' : key === 'i' ? 'italic' : key === 'u' ? 'underline' : null;
-    if (command) { event.preventDefault(); applyInline(command); return; }
+    if (command) {
+      event.preventDefault();
+      rememberSelection();
+      applyInline(command);
+      return;
+    }
   }
   if (event.key === 'Escape') { selectionOpen.value = false; linkEditorOpen.value = false; }
 }
 function handleEditorBeforeInput(event: InputEvent): void {
-  if (event.inputType !== 'deleteContentBackward' || event.isComposing) return;
+  if (event.defaultPrevented || event.isComposing || composing) return;
+  if (event.inputType === 'insertParagraph' || event.inputType === 'insertLineBreak') {
+    const selection = window.getSelection();
+    if (!selection?.rangeCount) return;
+    const range = selection.getRangeAt(0);
+    const block = range.startContainer.parentElement?.closest('pre');
+    if (block instanceof HTMLElement && editor.value?.contains(block) && block.contains(range.endContainer) && event.cancelable) {
+      event.preventDefault();
+      insertCodeText(block, range, '\n');
+    }
+    return;
+  }
+  if (event.inputType !== 'deleteContentBackward') return;
   const fallback = new KeyboardEvent('keydown', { key: 'Backspace', cancelable: true });
   handleEditorKeydown(fallback);
   if (fallback.defaultPrevented) event.preventDefault();
 }
+function handleHistoryBeforeInput(event: InputEvent): void {
+  const root = editor.value;
+  if (!root || !(event.target instanceof Node) || !root.contains(event.target) || composing || event.isComposing) return;
+  if (event.inputType === 'historyUndo' || event.inputType === 'historyRedo') {
+    if (!event.cancelable) return;
+    event.preventDefault();
+    changeVersion(event.inputType === 'historyUndo' ? 'undo' : 'redo');
+  } else history.remember(captureDocumentSelection(root));
+}
+function handleHistoryKey(event: KeyboardEvent): void {
+  const root = editor.value;
+  if (!root || !(event.target instanceof HTMLElement) || !root.contains(event.target)
+    || event.isComposing || composing || !(event.metaKey || event.ctrlKey) || event.altKey) return;
+  const key = event.key.toLowerCase();
+  if (key !== 'z' && key !== 'y') return;
+  event.preventDefault();
+  event.stopPropagation();
+  changeVersion(key === 'y' || event.shiftKey ? 'redo' : 'undo');
+}
+function changeVersion(direction: 'undo' | 'redo'): void {
+  const root = editor.value;
+  if (!root) return;
+  const version = history.step(direction);
+  if (!version) return;
+  lastModelValue = version.value;
+  renderDocument(root, version.value);
+  if (version.selection) restoreDocumentSelection(root, version.selection);
+  else focusEnd();
+  rememberSelection();
+  updateHistoryControls();
+  emit('update:modelValue', version.value);
+}
 function handlePaste(event: ClipboardEvent): void {
   const clipboard = event.clipboardData;
   if (!clipboard) return;
+  const root = editor.value;
+  if (!root) return;
+  rememberSelection();
+  const range = restoreSelection();
+  if (!range) return;
+  history.remember(captureDocumentSelection(root));
+  const start = range.startContainer instanceof Element ? range.startContainer : range.startContainer.parentElement;
+  const textOnly = start?.closest<HTMLElement>('pre, summary, figcaption, .knote-equation');
   const pastedImage = Array.from(clipboard.files).find((file) => file.type.startsWith('image/'))
     ?? Array.from(clipboard.items).find((item) => item.kind === 'file' && item.type.startsWith('image/'))?.getAsFile()
     ?? null;
-  if (pastedImage) {
+  if (pastedImage && !textOnly) {
     event.preventDefault();
     const selection = window.getSelection();
     insertionAnchor.value = selection?.anchorNode ? directBlock(selection.anchorNode) : null;
@@ -1847,9 +2100,18 @@ function handlePaste(event: ClipboardEvent): void {
     return;
   }
   event.preventDefault();
-  rememberSelection();
   const plainTextValue = clipboard.getData('text/plain');
   const plainText = plainTextValue.trim();
+  if (textOnly?.contains(range.endContainer)) {
+    const text = textOnly.matches('summary, figcaption') ? plainTextValue.replace(/\r?\n/g, ' ') : plainTextValue.replaceAll('\r', '');
+    if (textOnly.tagName === 'PRE') {
+      if (text) insertCodeText(textOnly, range, text);
+      return;
+    }
+    if (text && !document.execCommand('insertText', false, text)) insertFragmentAtSelection(document.createTextNode(text));
+    emitDocument();
+    return;
+  }
   if (/^(?:https?:\/\/|www\.)[^\s]+$/i.test(plainText)) {
     const url = safeLinkUrl(plainText);
     if (url) {
@@ -1857,7 +2119,7 @@ function handlePaste(event: ClipboardEvent): void {
       link.href = url;
       link.textContent = plainText;
       insertFragmentAtSelection(link);
-      handleEditorInput();
+      emitDocument();
       return;
     }
   }
@@ -1867,20 +2129,22 @@ function handlePaste(event: ClipboardEvent): void {
     const parsed = new DOMParser().parseFromString(html, 'text/html');
     const clean = sanitizeNodes(Array.from(parsed.body.childNodes));
     if (clean) {
-      const template = document.createElement('template');
-      template.innerHTML = clean;
-      inserted = insertFragmentAtSelection(template.content);
+      inserted = document.execCommand('insertHTML', false, clean);
     }
   }
   if (!inserted) {
-    const fragment = document.createDocumentFragment();
-    plainTextValue.split(/\r?\n/).forEach((line, index) => {
-      if (index) fragment.append(document.createElement('br'));
-      fragment.append(document.createTextNode(line));
-    });
-    insertFragmentAtSelection(fragment);
+    if (!plainTextValue) return;
+    const template = document.createElement('template');
+    for (const line of plainTextValue.split(/\r?\n/)) {
+      const paragraph = document.createElement('p');
+      if (line) paragraph.textContent = line;
+      else paragraph.append(document.createElement('br'));
+      template.content.append(paragraph);
+    }
+    if (!document.execCommand('insertHTML', false, template.innerHTML)) insertFragmentAtSelection(document.createTextNode(plainTextValue));
   }
-  handleEditorInput();
+  emitDocument();
+  void hydrateImageAssets(root);
 }
 function handleEditorClick(event: MouseEvent): void {
   const target = event.target;
@@ -1888,7 +2152,10 @@ function handleEditorClick(event: MouseEvent): void {
   const checkbox = target instanceof HTMLInputElement && target.type === 'checkbox' ? target : null;
   if (checkbox) {
     const item = checkbox.closest('li');
-    if (item) item.dataset.task = String(checkbox.checked);
+    if (item) {
+      item.dataset.task = String(checkbox.checked);
+      checkbox.toggleAttribute('checked', checkbox.checked);
+    }
     emitDocument();
     return;
   }
@@ -1896,8 +2163,12 @@ function handleEditorClick(event: MouseEvent): void {
   if (link instanceof HTMLAnchorElement) {
     const href = safeLinkUrl(link.getAttribute('href') || '');
     event.preventDefault();
-    if (href) window.open(href, '_blank', 'noopener,noreferrer');
+    if (href && (event.metaKey || event.ctrlKey || event.detail === 0)) window.open(href, '_blank', 'noopener,noreferrer');
   }
+}
+function handleDisclosureToggle(event: Event): void {
+  const details = event.target;
+  if (details instanceof HTMLDetailsElement && editor.value?.contains(details)) emitDocument(false);
 }
 function handleImageRejected(rejections: readonly { message: string }[]): void {
   imageError.value = rejections[0]?.message || 'No se pudo añadir esa imagen.';
@@ -1906,6 +2177,9 @@ function handleOutsidePointerDown(event: PointerEvent): void {
   const target = event.target;
   if (!(target instanceof Element)) return;
   if (target.closest('[data-balsa="menu-list"], [data-balsa="popup-panel"], .knote-format-toolbar, .knote-link-editor, .knote-editor-control')) return;
+  if (slashState) cancelSlashMenu(false);
+  blockMenuOpen.value = false;
+  if (imagePickerOpen.value) cancelImageInsertion();
   if (shell.value?.contains(target)) {
     const isActiveComponent = activeCodeBlock.value?.contains(target)
       || activeCallout.value?.contains(target)
@@ -1915,27 +2189,43 @@ function handleOutsidePointerDown(event: PointerEvent): void {
   }
   selectionOpen.value = false;
   linkEditorOpen.value = false;
-  blockMenuOpen.value = false;
   codeLanguageMenuOpen.value = false;
   calloutIconMenuOpen.value = false;
-  imagePickerOpen.value = false;
   clearActiveComponentSettings();
   hoveredBlock.value = null;
-  savedSelectionText = '';
   savedSelectedBlocks = [];
 }
-watch(() => props.modelValue, (value) => {
-  if (value === lastModelValue) return;
-  lastModelValue = value;
-  if (editor.value) {
+function renderDocument(root: HTMLElement, value: string): void {
+  renderingVersion = true;
+  try {
+    savedRange = null;
+    savedSelectedBlocks = [];
+    hoveredBlock.value = null;
+    slashState = null;
+    slashMenuOpen.value = false;
+    blockMenuOpen.value = false;
+    blockContextMenuOpen.value = false;
+    selectionOpen.value = false;
+    linkEditorOpen.value = false;
+    formatBlocksOpen.value = false;
+    cancelImageInsertion();
     clearActiveComponentSettings();
     unmountTableBlocks();
-    editor.value.innerHTML = initialHtml(value);
-    normalizeEditorDom(editor.value);
-    mountTableBlocks(editor.value);
-    updateEditorPlaceholder(editor.value);
-    void hydrateImageAssets(editor.value);
+    root.innerHTML = initialHtml(value);
+    normalizeEditorDom(root);
+    mountTableBlocks(root);
+    updateEditorPlaceholder(root);
+    void hydrateImageAssets(root);
+  } finally {
+    renderingVersion = false;
   }
+}
+watch(() => [props.pageId, props.modelValue] as const, ([id, value], [previousId]) => {
+  if (id === previousId && value === lastModelValue) return;
+  lastModelValue = value;
+  history = createDocumentHistory(value);
+  updateHistoryControls();
+  if (editor.value) renderDocument(editor.value, value);
 });
 watch(() => props.placeholder, () => {
   if (editor.value) updateEditorPlaceholder(editor.value);
@@ -1948,13 +2238,7 @@ watch(selectionOpen, (open) => {
   if (open) void nextTick(updateSelectionToolbar);
 });
 onMounted(() => {
-  if (editor.value) {
-    editor.value.innerHTML = initialHtml(props.modelValue);
-    normalizeEditorDom(editor.value);
-    mountTableBlocks(editor.value);
-    updateEditorPlaceholder(editor.value);
-    void hydrateImageAssets(editor.value);
-  }
+  if (editor.value) renderDocument(editor.value, props.modelValue);
   document.addEventListener('selectionchange', scheduleSelectionUpdate, { passive: true });
   document.addEventListener('pointerdown', handleOutsidePointerDown);
   document.addEventListener('pointermove', handleEditorPointerMove, { passive: true });
@@ -1980,6 +2264,9 @@ onBeforeUnmount(() => {
   if (selectionFrame) cancelAnimationFrame(selectionFrame);
   imageObjectUrls.forEach((url) => URL.revokeObjectURL(url));
   imageObjectUrls.clear();
+  retainedImages.forEach((release) => release());
+  retainedImages.clear();
+  imageRequestVersion += 1;
 });
 </script>
 
@@ -1989,11 +2276,21 @@ onBeforeUnmount(() => {
     class="knote-block-editor-shell"
     @contextmenu="handleComponentContextMenu"
     @keydown.esc="clearActiveComponentSettings"
+    @keydown.capture="handleHistoryKey"
+    @beforeinput.capture="handleHistoryBeforeInput"
     @pointerover="handleEditorPointerOver"
     @pointerleave="handleEditorPointerLeave"
     @dragover="handleEditorDragOver"
     @drop="handleEditorDrop"
   >
+    <div v-if="documentControls" class="knote-document-controls knote-editor-control" role="group" aria-label="Edición del documento">
+      <Button variant="soft" color="neutral" size="sm" :prefix-icon="Plus" @click="openBlockMenu">Añadir bloque</Button>
+      <span v-if="emptyDocument" class="knote-document-shortcut">Escribe <kbd>/</kbd> para insertar</span>
+      <div class="knote-document-history">
+        <Button variant="soft" color="neutral" size="sm" :prefix-icon="Undo2" aria-label="Deshacer" title="Deshacer" :disabled="!undoAvailable" @click="changeVersion('undo')" />
+        <Button variant="soft" color="neutral" size="sm" :prefix-icon="Redo2" aria-label="Rehacer" title="Rehacer" :disabled="!redoAvailable" @click="changeVersion('redo')" />
+      </div>
+    </div>
     <div
       ref="editor"
       class="knote-block-editor"
@@ -2006,6 +2303,8 @@ onBeforeUnmount(() => {
       spellcheck="true"
       @input="handleEditorInput"
       @beforeinput="handleEditorBeforeInput"
+      @compositionstart.self="startComposition"
+      @compositionend.self="finishComposition"
       @keydown="handleEditorKeydown"
       @focus="handleEditorFocus"
       @keyup="handleEditorKeyup"
@@ -2013,10 +2312,11 @@ onBeforeUnmount(() => {
       @pointerup="scheduleSelectionUpdate"
       @paste="handlePaste"
       @click="handleEditorClick"
+      @toggle.capture="handleDisclosureToggle"
     />
 
     <div
-    v-if="hoveredBlock"
+      v-if="hoveredBlock"
       class="knote-block-actions knote-editor-control"
       :style="blockActionsPosition"
       role="toolbar"
@@ -2026,7 +2326,7 @@ onBeforeUnmount(() => {
       <Button variant="glass" color="neutral" size="sm" aria-label="Añadir un bloque debajo" title="Añadir un bloque" @click="openBlockMenu">
         <Icon :icon="Plus" size="sm" />
       </Button>
-      <ContextMenu
+      <DropdownMenu
         :id="blockContextMenuId"
         label="Opciones del bloque"
         :items="blockContextMenuItems"
@@ -2034,22 +2334,18 @@ onBeforeUnmount(() => {
         color="neutral"
         rounded="md"
         v-model="blockContextMenuOpen"
+        @update:model-value="(open) => open && rememberBlockContextTarget()"
         @select="handleBlockContextSelection"
       >
-        <Button
-          variant="glass"
-          color="neutral"
-          size="sm"
-          aria-label="Arrastrar o mover bloque"
-          title="Arrastra para mover; clic derecho para borrar; Alt + flechas para reordenar"
+        <template #trigger>
+          <span
+          class="knote-block-drag-grip"
+          title="Arrastra para mover o pulsa para ver las acciones"
           @pointerdown.stop="handleBlockHandlePointerDown"
-          @focus="rememberBlockContextTarget"
-          @keydown.alt.up.prevent="moveBlockByKeyboard(-1)"
-          @keydown.alt.down.prevent="moveBlockByKeyboard(1)"
-        >
-          <Icon :icon="GripVertical" size="sm" />
-        </Button>
-      </ContextMenu>
+          @click.capture="handleBlockHandleClick"
+          ><Icon :icon="GripVertical" size="sm" /></span>
+        </template>
+      </DropdownMenu>
     </div>
 
     <div v-if="blockMenuOpen" class="knote-block-insert-menu knote-editor-control" :style="blockMenuPosition" @keydown.esc.capture="blockMenuOpen = false">
@@ -2122,23 +2418,25 @@ onBeforeUnmount(() => {
         :aria-label="imageResizeLabels[direction]"
         :title="imageResizeLabels[direction]"
         @pointerdown.stop.prevent="startImageResize($event, direction)"
+        @keydown="resizeImageWithKeyboard"
       />
     </div>
 
     <div v-if="imagePickerOpen" class="knote-image-picker knote-editor-control" :style="imagePickerPosition" @pointerdown.stop>
       <div class="knote-image-picker-heading">
-        <div><strong>Añadir imagen</strong><span>Se guarda localmente y conserva su calidad.</span></div>
-        <Button variant="soft" color="neutral" size="sm" shape="fab" aria-label="Cerrar selector de imagen" @click="imagePickerOpen = false"><Icon :icon="Minus" size="xs" /></Button>
+        <strong>Añadir imagen</strong>
+        <Button variant="soft" color="neutral" size="sm" shape="fab" aria-label="Cerrar selector de imagen" @click="cancelImageInsertion"><Icon :icon="Minus" size="xs" /></Button>
       </div>
       <Attachment :id="`block-image-${pageId}`" v-model="selectedImageFiles" label="Seleccionar imagen" hint="JPG, PNG, GIF o WebP · hasta 12 MB" accept="image/*" :max-size="12 * 1024 * 1024" :max-files="1" size="sm" @update:model-value="handleImageSelection" @reject="handleImageRejected" />
       <p v-if="imageError" class="knote-image-error" role="alert">{{ imageError }}</p>
+      <p v-if="imageUploading" role="status">Preparando imagen…</p>
     </div>
 
     <div
       v-if="slashMenuOpen"
       class="knote-slash-command knote-editor-control"
       :style="slashMenuPosition"
-      @keydown.esc.capture="cancelSlashMenu"
+      @keydown.esc.capture.stop.prevent="cancelSlashMenu()"
     >
       <CommandMenu
         :id="`slash-blocks-${pageId}`"

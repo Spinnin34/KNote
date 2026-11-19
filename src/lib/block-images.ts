@@ -3,6 +3,20 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 const DATABASE_NAME = 'knote-block-assets';
 const STORE_NAME = 'images';
 let database: Promise<IDBDatabase> | null = null;
+const retainedImages = new Map<string, number>();
+
+export function retainBlockImage(id: string): () => void {
+  retainedImages.set(id, (retainedImages.get(id) ?? 0) + 1);
+  return () => {
+    const count = retainedImages.get(id) ?? 0;
+    if (count > 1) retainedImages.set(id, count - 1);
+    else retainedImages.delete(id);
+  };
+}
+
+export function isBlockImageRetained(id: string): boolean {
+  return retainedImages.has(id);
+}
 
 function openDatabase(): Promise<IDBDatabase> {
   if (database) return database;
@@ -14,6 +28,7 @@ function openDatabase(): Promise<IDBDatabase> {
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error || new Error('No se pudo abrir el almacenamiento de imágenes.'));
   });
+  void database.catch(() => { database = null; });
   return database;
 }
 

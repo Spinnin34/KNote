@@ -106,9 +106,10 @@
 .knote-public-content .knote-preview-column { min-width: 0; }
 .knote-public-content details { margin: 1rem 0; }
 .knote-public-content summary { cursor: pointer; font-weight: 600; }
+.knote-public-table-scroll { margin-block: 1.25rem; overflow-x: auto; }
 .knote-public-content table { width: 100%; border-collapse: collapse; }
 .knote-public-content th,
-.knote-public-content td { padding: .6rem .7rem; border-bottom: 1px solid var(--balsa-role-border); text-align: left; vertical-align: top; }
+.knote-public-content td { min-width: 6rem; padding: .6rem .7rem; border-bottom: 1px solid var(--balsa-role-border); text-align: left; vertical-align: top; white-space: pre-wrap; }
 .knote-public-content input[type="checkbox"] { margin-right: .45rem; accent-color: var(--balsa-role-accent); }
 .knote-public-document > footer { margin-top: 4rem; color: var(--balsa-role-secondary); font-size: .85rem; }
 .knote-public-message { display: flex; min-height: 65vh; flex-direction: column; align-items: center; justify-content: center; gap: .85rem; color: var(--balsa-role-secondary); text-align: center; }

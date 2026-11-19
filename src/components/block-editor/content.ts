@@ -82,7 +82,9 @@ function legacyMarkdownToHtml(source: string): string {
       }
       if (current.length) columns.push(legacyMarkdownToHtml(current.join('\n')));
       index += 1;
-      output.push('<div class="knote-preview-columns" style="--knote-columns:' + Number(columnsMatch[1]) + '">' + columns.map((column) => '<div class="knote-preview-column">' + column + '</div>').join('') + '</div>');
+      const count = Number(columnsMatch[1]);
+      while (columns.length < count) columns.push('<p><br></p>');
+      output.push('<div class="knote-preview-columns" style="--knote-columns:' + count + '">' + columns.map((column) => '<div class="knote-preview-column">' + column + '</div>').join('') + '</div>');
       continue;
     }
     const toggle = /^:::toggle\s*(.*)$/.exec(line);
@@ -112,16 +114,19 @@ function legacyMarkdownToHtml(source: string): string {
     }
     if (/^(?:- \[[ xX]\]\s+|[-*+•]\s+|\d+\.\s+)/.test(line)) {
       const ordered = /^\d+\.\s+/.test(line);
+      const checklist = /^- \[[ xX]\]\s+/.test(line);
       const items: string[] = [];
-      while (index < lines.length && /^(?:- \[[ xX]\]\s+|[-*+•]\s+|\d+\.\s+)/.test(lines[index])) {
+      while (index < lines.length && /^(?:- \[[ xX]\]\s+|[-*+•]\s+|\d+\.\s+)/.test(lines[index])
+        && /^\d+\.\s+/.test(lines[index]) === ordered && /^- \[[ xX]\]\s+/.test(lines[index]) === checklist) {
         const task = /^- \[([ xX])\]\s+(.*)$/.exec(lines[index]);
         const content = task ? task[2] : lines[index].replace(/^(?:[-*+•]\s+|\d+\.\s+)/, '');
         items.push(task
-          ? `<li data-task="${task[1].toLowerCase() === 'x'}"><input type="checkbox" contenteditable="false"${task[1].toLowerCase() === 'x' ? ' checked' : ''}>${inlineMarkdown(content)}</li>`
+          ? `<li data-task="${task[1].toLowerCase() === 'x'}"><input type="checkbox" aria-label="Tarea completada" contenteditable="false"${task[1].toLowerCase() === 'x' ? ' checked' : ''}>${inlineMarkdown(content)}</li>`
           : `<li>${inlineMarkdown(content)}</li>`);
         index += 1;
       }
-      output.push(`<${ordered ? 'ol' : 'ul'}>${items.join('')}</${ordered ? 'ol' : 'ul'}>`);
+      const start = Number.parseInt(line, 10);
+      output.push(ordered ? `<ol${Number.isSafeInteger(start) && start !== 1 ? ` start="${start}"` : ''}>${items.join('')}</ol>` : `<ul>${items.join('')}</ul>`);
       continue;
     }
     const paragraph: string[] = [];
@@ -131,9 +136,10 @@ function legacyMarkdownToHtml(source: string): string {
   return output.join('') || '<p><br></p>';
 }
 
-const allowedTags = new Set(['P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'UL', 'OL', 'LI', 'BLOCKQUOTE', 'PRE', 'CODE', 'STRONG', 'B', 'EM', 'I', 'U', 'S', 'DEL', 'MARK', 'A', 'BR', 'HR', 'DETAILS', 'SUMMARY', 'INPUT', 'SPAN', 'FIGURE', 'FIGCAPTION', 'IMG']);
+const allowedTags = new Set(['P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'UL', 'OL', 'LI', 'BLOCKQUOTE', 'PRE', 'CODE', 'STRONG', 'B', 'EM', 'I', 'U', 'S', 'STRIKE', 'DEL', 'MARK', 'A', 'BR', 'HR', 'DETAILS', 'SUMMARY', 'INPUT', 'SPAN', 'FIGURE', 'FIGCAPTION', 'IMG']);
+const omittedTags = new Set(['SCRIPT', 'STYLE', 'TEMPLATE', 'NOSCRIPT']);
 function safeHref(value: string): string | null {
-  if (value.startsWith('#page-')) return value;
+  if (!value.trim()) return null;
   try {
     const url = new URL(value, window.location.origin);
     if (url.protocol === 'http:' || url.protocol === 'https:' || url.protocol === 'mailto:') return value;
@@ -144,6 +150,7 @@ export function safeBlockColor(value: string | null | undefined): string | null 
   return value && /^#[\da-f]{6}$/i.test(value) ? value.toLowerCase() : null;
 }
 function safeImageSource(value: string): string | null {
+  if (!value.trim()) return null;
   if (/^knote-asset:[\da-f-]{20,}$/i.test(value)) return value;
   try {
     const url = new URL(value, window.location.origin);
@@ -154,6 +161,18 @@ function safeImageSource(value: string): string | null {
 export function safeLanguage(value: string | null): string {
   return value && LANGUAGE_IDS.has(value) ? value : 'plaintext';
 }
+export function codeBlockText(block: HTMLElement): string {
+  const code = block.firstElementChild;
+  const canonical = !block.childElementCount
+    || (block.childNodes.length === 1 && code?.tagName === 'CODE' && code.childElementCount === 0);
+  if (canonical) return block.textContent ?? '';
+  if (!block.textContent && block.querySelectorAll('br').length === 1) return '';
+  if (block.isConnected) return block.innerText;
+  const copy = block.cloneNode(true) as HTMLElement;
+  copy.querySelectorAll('br').forEach((line) => line.replaceWith('\n'));
+  return copy.textContent ?? '';
+}
+export const TABLE_LIMITS = { columns: 8, rows: 100, header: 300, cell: 2000 } as const;
 export interface EditorTableData { caption: string; headers: string[]; rows: string[][] }
 export const EMPTY_TABLE: EditorTableData = {
   caption: 'Tabla',
@@ -163,11 +182,11 @@ export const EMPTY_TABLE: EditorTableData = {
 export function normalizeTableData(value: unknown): EditorTableData {
   if (!value || typeof value !== 'object') return { ...EMPTY_TABLE, headers: [...EMPTY_TABLE.headers], rows: EMPTY_TABLE.rows.map((row) => [...row]) };
   const candidate = value as Partial<EditorTableData>;
-  const headers = Array.isArray(candidate.headers) ? candidate.headers.slice(0, 8).map((item) => String(item ?? '').slice(0, 300)) : [...EMPTY_TABLE.headers];
+  const headers = Array.isArray(candidate.headers) ? candidate.headers.slice(0, TABLE_LIMITS.columns).map((item) => String(item ?? '').slice(0, TABLE_LIMITS.header)) : [...EMPTY_TABLE.headers];
   while (headers.length < 1) headers.push('Columna 1');
   const rows = Array.isArray(candidate.rows)
-    ? candidate.rows.slice(0, 100).map((row) => Array.from({ length: headers.length }, (_, index) => String(Array.isArray(row) ? row[index] ?? '' : '').slice(0, 2000)))
-    : EMPTY_TABLE.rows.map((row) => row.slice(0, headers.length));
+    ? candidate.rows.slice(0, TABLE_LIMITS.rows).map((row) => Array.from({ length: headers.length }, (_, index) => String(Array.isArray(row) ? row[index] ?? '' : '').slice(0, TABLE_LIMITS.cell)))
+    : EMPTY_TABLE.rows.map(() => headers.map(() => ''));
   return {
     caption: typeof candidate.caption === 'string' && candidate.caption.trim() ? candidate.caption.slice(0, 200) : 'Tabla',
     headers,
@@ -176,20 +195,24 @@ export function normalizeTableData(value: unknown): EditorTableData {
 }
 
 export function tableDataFromBlock(block: HTMLElement): EditorTableData {
-  const table = block.querySelector<HTMLTableElement>('table');
-  if (table) {
-    const headers = Array.from(table.querySelectorAll<HTMLTableCellElement>('thead th')).map((cell) => cell.innerText.replaceAll('\u00a0', ' ').trim());
-    const rows = Array.from(table.querySelectorAll<HTMLTableRowElement>('tbody tr')).map((row) =>
-      Array.from(row.querySelectorAll<HTMLTableCellElement>('th, td')).map((cell) => cell.innerText.replaceAll('\u00a0', ' ').trim()),
-    );
-    if (headers.length) return normalizeTableData({ caption: block.dataset.caption || 'Tabla', headers, rows });
-  }
   try { return normalizeTableData(JSON.parse(block.dataset.knoteTable || '')); }
   catch { return normalizeTableData(null); }
 }
 function tablePlaceholder(block: HTMLElement): string {
-  const data = tableDataFromBlock(block);
-  return `<div class="knote-table-block" data-knote-table="${escapeHtml(JSON.stringify(data))}"></div>`;
+  const data = block instanceof HTMLTableElement ? importedTableData(block) : tableDataFromBlock(block);
+  return `<div class="knote-table-block" contenteditable="false" data-knote-table="${escapeHtml(JSON.stringify(data))}"><br></div>`;
+}
+function importedTableData(table: HTMLTableElement): EditorTableData {
+  const headerRow = table.tHead?.rows[0] ?? (table.rows[0]?.cells[0]?.tagName === 'TH' ? table.rows[0] : null);
+  const readRow = (row: HTMLTableRowElement): string[] => Array.from(row.cells, (cell) => cell.textContent ?? '');
+  const rows = Array.from(table.rows).filter((row) => row !== headerRow).slice(0, TABLE_LIMITS.rows).map(readRow);
+  const headers = headerRow ? readRow(headerRow) : [];
+  const width = Math.min(TABLE_LIMITS.columns, Math.max(headers.length, ...rows.map((row) => row.length), 1));
+  return normalizeTableData({
+    caption: table.caption?.textContent,
+    headers: Array.from({ length: width }, (_, index) => headers[index] ?? `Columna ${index + 1}`),
+    rows,
+  });
 }
 
 export function calloutGlyph(value: string | null | undefined): string {
@@ -201,10 +224,12 @@ export function calloutGlyph(value: string | null | undefined): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${children}</svg>`;
 }
 export function sanitizeNodes(nodes: NodeListOf<ChildNode> | ChildNode[]): string {
-  const sanitized = Array.from(nodes).map((node) => {
+  return Array.from(nodes).map((node) => {
     if (node.nodeType === Node.TEXT_NODE) return escapeHtml(node.textContent || '');
     if (!(node instanceof HTMLElement) && !(node instanceof SVGElement)) return '';
     const tag = node.nodeName.toUpperCase();
+    if (omittedTags.has(tag)) return '';
+    if (node instanceof HTMLTableElement) return tablePlaceholder(node);
     if (!allowedTags.has(tag)) return sanitizeNodes(Array.from(node.childNodes));
     if (tag === 'BR') return '<br>';
     if (tag === 'HR') return '<hr>';
@@ -222,8 +247,16 @@ export function sanitizeNodes(nodes: NodeListOf<ChildNode> | ChildNode[]): strin
       return `<input type="checkbox" contenteditable="false"${checked ? ' checked' : ''}>`;
     }
     if (tag === 'DIV' && node.classList.contains('knote-table-block')) return tablePlaceholder(node as HTMLElement);
-    const children = tag === 'BR' || tag === 'HR' ? '' : sanitizeNodes(Array.from(node.childNodes));
-    if (tag === 'PRE') return `<pre data-language="${safeLanguage(node.getAttribute('data-language'))}" data-empty="${!node.textContent?.trim()}">${children}</pre>`;
+    const children = sanitizeNodes(node.childNodes);
+    if (tag === 'DETAILS') return `<details${node.hasAttribute('open') ? ' open' : ''}>${children}</details>`;
+    if (tag === 'PRE') {
+      const code = codeBlockText(node as HTMLElement);
+      return `<pre data-language="${safeLanguage(node.getAttribute('data-language'))}" data-empty="${!code.trim()}"><code>${escapeHtml(code) || '<br>'}</code></pre>`;
+    }
+    if (tag === 'OL') {
+      const start = node.getAttribute('start');
+      return `<ol${start && /^-?\d{1,9}$/.test(start) ? ` start="${start}"` : ''}>${children}</ol>`;
+    }
     if (tag === 'FIGURE' && node.classList.contains('knote-image-block')) {
       const width = Math.min(100, Math.max(20, Number.parseFloat(node.getAttribute('data-width') || '100') || 100));
       const offset = Math.min(100 - width, Math.max(0, Number.parseFloat(node.getAttribute('data-offset') || '0') || 0));
@@ -261,32 +294,22 @@ export function sanitizeNodes(nodes: NodeListOf<ChildNode> | ChildNode[]): strin
     if (tag === 'DIV' && node.classList.contains('knote-preview-column')) return `<div class="knote-preview-column">${children}</div>`;
     if (tag === 'DIV' && node.classList.contains('knote-equation')) return `<div class="knote-equation" data-empty="${!node.textContent?.trim()}">${children}</div>`;
     if (tag === 'LI' && node.getAttribute('data-task') !== null) {
-      const checkbox = node.querySelector('input[type="checkbox"]') as HTMLInputElement | null;
+      const checkbox = node.querySelector<HTMLInputElement>(':scope > input[type="checkbox"]');
+      const checked = checkbox?.checked ?? node.getAttribute('data-task') === 'true';
       const text = Array.from(node.childNodes).filter((child) => !(child instanceof HTMLInputElement)).map((child) => sanitizeNodes([child])).join('');
-      return `<li data-task="${Boolean(checkbox?.checked)}"><input type="checkbox" contenteditable="false"${checkbox?.checked ? ' checked' : ''}>${text}</li>`;
+      return `<li data-task="${checked}"><input type="checkbox" aria-label="Tarea completada" contenteditable="false"${checked ? ' checked' : ''}>${text}</li>`;
     }
     if (tag === 'B') return `<strong>${children}</strong>`;
     if (tag === 'I') return `<em>${children}</em>`;
+    if (tag === 'STRIKE') return `<s>${children}</s>`;
     return `<${tag.toLowerCase()}>${children}</${tag.toLowerCase()}>`;
   }).join('');
-  // Contenteditable can emit long runs of <br> when blank lines are pasted or repeated.
-  // Keep one intentional break so those runs cannot create hundreds of pixels of dead space.
-  return sanitized.replace(/(?:<br>){2,}/g, '<br>');
 }
 
 export function initialHtml(value: string): string {
   if (value.startsWith(RICH_PREFIX)) {
     const parsed = new DOMParser().parseFromString(value.slice(RICH_PREFIX.length), 'text/html');
-    const rootNodes = Array.from(parsed.body.childNodes).filter((node) => {
-      if (node.nodeType === Node.TEXT_NODE) return Boolean(node.textContent?.replace(/[\s\u00a0\u200b\ufeff]/g, ''));
-      if (node instanceof HTMLElement && node.tagName === 'P') {
-        const hasVisibleText = Boolean(node.textContent?.replace(/[\s\u00a0\u200b\ufeff]/g, ''));
-        const hasMedia = Boolean(node.querySelector('img, input, video, audio, iframe, hr, figure'));
-        return hasVisibleText || hasMedia;
-      }
-      return true;
-    });
-    return sanitizeNodes(rootNodes);
+    return sanitizeNodes(parsed.body.childNodes);
   }
   return legacyMarkdownToHtml(value);
 }

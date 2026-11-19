@@ -16,13 +16,16 @@ let originalTitle = '';
 function renderSafeContent(content: string): string {
   const template = document.createElement('template');
   template.innerHTML = initialHtml(content);
+  template.content.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach((checkbox) => { checkbox.disabled = true; });
+  template.content.querySelectorAll<HTMLImageElement>('img').forEach((image) => {
+    image.loading = 'lazy';
+    image.referrerPolicy = 'no-referrer';
+  });
   template.content.querySelectorAll<HTMLImageElement>('img[data-asset-id]').forEach((image) => {
     const assetId = image.dataset.assetId;
     if (!assetId || !/^[\da-f-]{20,64}$/i.test(assetId)) { image.remove(); return; }
     image.src = `/api/public/${encodeURIComponent(token)}/assets/${encodeURIComponent(assetId)}`;
     image.removeAttribute('data-asset-id');
-    image.loading = 'lazy';
-    image.referrerPolicy = 'no-referrer';
   });
   template.content.querySelectorAll<HTMLElement>('.knote-table-block').forEach((block) => {
     let data: { caption?: unknown; headers?: unknown; rows?: unknown };
@@ -51,7 +54,10 @@ function renderSafeContent(content: string): string {
       tbody.append(tr);
     });
     table.append(tbody);
-    block.replaceWith(table);
+    const scroller = document.createElement('div');
+    scroller.className = 'knote-public-table-scroll';
+    scroller.append(table);
+    block.replaceWith(scroller);
   });
   return template.innerHTML;
 }

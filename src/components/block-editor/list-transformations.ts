@@ -1,4 +1,4 @@
-import { blankElement, createBlock } from '@/components/block-editor/block-factory';
+import { blankElement, createBlock, createTaskCheckbox } from '@/components/block-editor/block-factory';
 
 export function listItemContent(item: HTMLLIElement): { content: Node[]; nestedLists: HTMLElement[]; checkbox: HTMLInputElement | null } {
   const content: Node[] = [];
@@ -45,15 +45,22 @@ export function replaceSelectedListItems(items: HTMLLIElement[], build: (selecte
 }
 
 export function mergeAdjacentLists(block: HTMLElement): HTMLElement {
+  const compatible = (left: Element, right: Element): boolean => {
+    if (left.tagName !== right.tagName || !['UL', 'OL'].includes(left.tagName)) return false;
+    if (left instanceof HTMLOListElement && right instanceof HTMLOListElement) {
+      return !left.reversed && !right.reversed && (!right.hasAttribute('start') || right.start === left.start + left.children.length);
+    }
+    return left.firstElementChild?.hasAttribute('data-task') === right.firstElementChild?.hasAttribute('data-task');
+  };
   let merged = block;
   const previous = merged.previousElementSibling;
-  if (previous?.tagName === merged.tagName && ['UL', 'OL'].includes(merged.tagName)) {
+  if (previous && compatible(previous, merged)) {
     previous.append(...Array.from(merged.children));
     merged.remove();
     merged = previous as HTMLElement;
   }
   const next = merged.nextElementSibling;
-  if (next?.tagName === merged.tagName && ['UL', 'OL'].includes(merged.tagName)) {
+  if (next && compatible(merged, next)) {
     merged.append(...Array.from(next.children));
     next.remove();
   }
@@ -126,11 +133,7 @@ export function convertListItemsToList(items: HTMLLIElement[], id: string): HTML
       if (id === 'block:task') {
         const checked = checkbox?.checked || item.dataset.task === 'true';
         next.dataset.task = String(checked);
-        const input = document.createElement('input');
-        input.type = 'checkbox';
-        input.checked = checked;
-        input.setAttribute('contenteditable', 'false');
-        next.append(input);
+        next.append(createTaskCheckbox(checked));
       }
       content.forEach((node) => next.append(node.cloneNode(true)));
       nestedLists.forEach((nested) => next.append(nested.cloneNode(true)));

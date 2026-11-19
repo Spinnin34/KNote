@@ -8,6 +8,16 @@ export function blankElement(tag: string): HTMLElement {
   return element;
 }
 
+export function createTaskCheckbox(checked = false): HTMLInputElement {
+  const checkbox = document.createElement('input');
+  checkbox.type = 'checkbox';
+  checkbox.checked = checked;
+  checkbox.toggleAttribute('checked', checked);
+  checkbox.setAttribute('contenteditable', 'false');
+  checkbox.setAttribute('aria-label', 'Tarea completada');
+  return checkbox;
+}
+
 export function createBlock(id: string): HTMLElement {
   const heading = /^block:heading([1-4])$/.exec(id);
   if (heading) return blankElement(`h${heading[1]}`);
@@ -16,10 +26,7 @@ export function createBlock(id: string): HTMLElement {
     const item = document.createElement('li');
     if (id === 'block:task') {
       item.dataset.task = 'false';
-      const checkbox = document.createElement('input');
-      checkbox.type = 'checkbox';
-      checkbox.setAttribute('contenteditable', 'false');
-      item.append(checkbox);
+      item.append(createTaskCheckbox());
     }
     item.append(document.createElement('br'));
     list.append(item);
@@ -55,7 +62,7 @@ export function createBlock(id: string): HTMLElement {
   if (id === 'block:code') {
     const block = document.createElement('pre');
     block.dataset.language = 'plaintext';
-    block.append(document.createElement('code'), document.createElement('br'));
+    block.append(blankElement('code'));
     return block;
   }
   if (id === 'block:divider') return document.createElement('hr');
@@ -63,7 +70,8 @@ export function createBlock(id: string): HTMLElement {
     const details = document.createElement('details');
     const summary = document.createElement('summary');
     summary.textContent = 'Mostrar contenido';
-    const body = blankElement('div');
+    const body = document.createElement('div');
+    body.append(blankElement('p'));
     details.append(summary, body);
     return details;
   }

@@ -4,7 +4,7 @@ import type { DatabaseViewState, TodayTask, WorkspacePage, WorkspacePreferences 
 import {
   DATABASE_VIEWS_STORAGE_KEY, PAGE_STORAGE_KEY, TASK_STORAGE_KEY,
 } from '@/domain/workspace/constants';
-import { deleteBlockImage, getBlockImage, listBlockImageIds, saveBlockImage } from '@/lib/block-images';
+import { deleteBlockImage, getBlockImage, isBlockImageRetained, listBlockImageIds, saveBlockImage } from '@/lib/block-images';
 import type { WorkspaceSnapshot } from '@/lib/desktop-vault';
 import { isDesktopRuntime, isDesktopVaultReady, saveDesktopWorkspace } from '@/lib/desktop-vault';
 import { listCloudLocalStates } from '@/lib/cloud-cache';
@@ -32,9 +32,11 @@ export function useWorkspacePersistence(options: WorkspacePersistenceOptions) {
   let databaseViewSaveTimer: number | undefined;
   let assetPruneTimer: number | undefined;
   let desktopSaveQueue: Promise<void> = Promise.resolve();
+  let saveRevision = 0;
 
   async function pruneUnusedBlockImages(): Promise<void> {
     try {
+      const stored = await listBlockImageIds();
       const referenced = new Set<string>();
       const collect = (value: string | undefined) => {
         if (!value) return;
@@ -63,13 +65,15 @@ export function useWorkspacePersistence(options: WorkspacePersistenceOptions) {
           collectPages(cloudState.baseSnapshot?.pages);
         }
       }
-      const stored = await listBlockImageIds();
-      await Promise.all(stored.filter((id) => !referenced.has(id)).map(deleteBlockImage));
+      // Pages may have changed while the cloud cache was being read.
+      collectPages(pages.value);
+      await Promise.all(stored.filter((id) => !referenced.has(id) && !isBlockImageRetained(id)).map(deleteBlockImage));
     } catch { /* Keep existing images if the browser cannot inspect IndexedDB. */ }
   }
 
   function persist(): void {
     if (!enabled.value) return;
+    const revision = ++saveRevision;
     if (saveTimer !== undefined) window.clearTimeout(saveTimer);
     saveTimer = undefined;
     const previousState = saveState.value;
@@ -86,10 +90,12 @@ export function useWorkspacePersistence(options: WorkspacePersistenceOptions) {
       }
       desktopSaveQueue = desktopSaveQueue.catch(() => undefined).then(() => saveDesktopWorkspace(serializedSnapshot));
       void desktopSaveQueue.then(() => {
+        if (revision !== saveRevision) return;
         saveState.value = 'saved';
         if (assetPruneTimer !== undefined) window.clearTimeout(assetPruneTimer);
         assetPruneTimer = window.setTimeout(() => { void pruneUnusedBlockImages(); }, 250);
       }).catch(() => {
+        if (revision !== saveRevision) return;
         saveState.value = 'error';
         if (previousState !== 'error') notify('No se pudo guardar', 'Revisa el archivo local de KNote y el acceso a Documentos.', 'destructive');
       });
@@ -105,12 +111,14 @@ export function useWorkspacePersistence(options: WorkspacePersistenceOptions) {
         return;
       }
       void options.persistCloud(serializedSnapshot).then((result) => {
+        if (revision !== saveRevision) return;
         saveState.value = result === 'synced' ? 'saved' : result;
         if (result === 'synced') {
           if (assetPruneTimer !== undefined) window.clearTimeout(assetPruneTimer);
           assetPruneTimer = window.setTimeout(() => { void pruneUnusedBlockImages(); }, 250);
         }
       }).catch(() => {
+        if (revision !== saveRevision) return;
         saveState.value = 'error';
         if (previousState !== 'error') notify('No se pudo guardar', 'El cambio permanece en este dispositivo. Reintenta la sincronización.', 'destructive');
       });
@@ -132,6 +140,7 @@ export function useWorkspacePersistence(options: WorkspacePersistenceOptions) {
   function queueSave(): void {
     if (!enabled.value) return;
     if (isDesktopRuntime() && !isDesktopVaultReady()) { saveState.value = 'error'; return; }
+    saveRevision += 1;
     if (saveTimer !== undefined) window.clearTimeout(saveTimer);
     saveState.value = 'saving';
     saveTimer = window.setTimeout(persist, 320);
@@ -150,21 +159,18 @@ export function useWorkspacePersistence(options: WorkspacePersistenceOptions) {
   }
 
   function flushPendingChanges(): void {
-    if (saveTimer !== undefined) {
-      window.clearTimeout(saveTimer);
-      saveTimer = undefined;
-      persist();
-    }
+    const contentPending = saveTimer !== undefined;
+    const viewsUseSnapshot = isDesktopRuntime() || cloudActive.value;
+    const viewsPending = databaseViewSaveTimer !== undefined;
     if (databaseViewSaveTimer !== undefined) {
       window.clearTimeout(databaseViewSaveTimer);
       databaseViewSaveTimer = undefined;
-      if (isDesktopRuntime()) persist();
-      else if (cloudActive.value) persist();
-      else {
+      if (!viewsUseSnapshot) {
         try { localStorage.setItem(DATABASE_VIEWS_STORAGE_KEY, JSON.stringify(databaseViewStates.value)); }
         catch { /* Keep the rest of the workspace available if view preferences cannot be stored. */ }
       }
     }
+    if (contentPending || (viewsPending && viewsUseSnapshot)) persist();
   }
 
   async function hydratePageBanners(): Promise<void> {

@@ -74,6 +74,7 @@ export function useCloudWorkspace(options: CloudWorkspaceOptions) {
   let state: CloudLocalState | null = null;
   let pendingImport: { owner: string; snapshot: CloudSnapshot; signature: string; response: CloudWorkspaceResponse } | null = null;
   let syncQueue: Promise<void> = Promise.resolve();
+  let workspaceGeneration = 0;
   let debounceTimer: number | undefined;
   let blockedPages = new Set<string>();
   let stateBlocked = false;
@@ -108,10 +109,17 @@ export function useCloudWorkspace(options: CloudWorkspaceOptions) {
   }
 
   async function queueSync(serializedSnapshot: string): Promise<'synced' | 'pending' | 'conflict'> {
-    const snapshot = JSON.parse(serializedSnapshot) as CloudSnapshot;
-    await saveStateLocally(true);
     if (!owner.value || !state) return 'synced';
+    const generation = workspaceGeneration;
+    const snapshot = JSON.parse(serializedSnapshot) as CloudSnapshot;
+    const localSave = saveStateLocally(true).then(
+      () => ({ saved: true } as const),
+      (error: unknown) => ({ saved: false, error } as const),
+    );
     const operation = async (): Promise<'synced' | 'pending' | 'conflict'> => {
+      const local = await localSave;
+      if (!local.saved) throw local.error;
+      if (generation !== workspaceGeneration || !state) return 'pending';
       if (!navigator.onLine) {
         status.value = 'pending';
         return 'pending';
@@ -119,12 +127,13 @@ export function useCloudWorkspace(options: CloudWorkspaceOptions) {
       status.value = 'syncing';
       try {
         await ensureAssets(snapshot);
-        if (!state?.baseSnapshot) {
+        if (generation !== workspaceGeneration || !state) return 'pending';
+        if (!state.baseSnapshot) {
           const initial = await fetchCloudWorkspace();
+          if (generation !== workspaceGeneration || !state) return 'pending';
           state = {
-            owner: owner.value!, snapshot: cloneSnapshot(snapshot), baseSnapshot: cloneSnapshot(initial.snapshot),
+            ...state, baseSnapshot: cloneSnapshot(initial.snapshot),
             revisions: initial.revisions, stateRevision: initial.stateRevision, pending: true,
-            lastGuestSnapshot: state?.lastGuestSnapshot ?? null, updatedAt: Date.now(),
           };
           conflicts.value = initial.conflicts;
           blockedPages = new Set(initial.conflicts.filter((item) => item.kind === 'page' && item.pageId).map((item) => item.pageId!));
@@ -136,10 +145,12 @@ export function useCloudWorkspace(options: CloudWorkspaceOptions) {
         const previousPages = pageMap(base);
         const nextPages = pageMap(snapshot);
         for (const [pageId, page] of nextPages) {
+          if (generation !== workspaceGeneration) return 'pending';
           const previous = previousPages.get(pageId);
           if (JSON.stringify(previous) === JSON.stringify(page) || blockedPages.has(pageId)) continue;
           try {
             const result = await putCloudPage(page, state.revisions[pageId] ?? 0);
+            if (generation !== workspaceGeneration) return 'pending';
             state.revisions[pageId] = result.revision;
             previousPages.set(pageId, JSON.parse(JSON.stringify(page)) as WorkspacePage);
             state.baseSnapshot = { ...state.baseSnapshot!, pages: [...previousPages.values()] };
@@ -150,9 +161,11 @@ export function useCloudWorkspace(options: CloudWorkspaceOptions) {
           }
         }
         for (const [pageId] of previousPages) {
+          if (generation !== workspaceGeneration) return 'pending';
           if (nextPages.has(pageId) || blockedPages.has(pageId)) continue;
           try {
             await deleteCloudPage(pageId, state.revisions[pageId] ?? 0);
+            if (generation !== workspaceGeneration) return 'pending';
             previousPages.delete(pageId);
             delete state.revisions[pageId];
             state.baseSnapshot = { ...state.baseSnapshot!, pages: [...previousPages.values()] };
@@ -168,6 +181,7 @@ export function useCloudWorkspace(options: CloudWorkspaceOptions) {
           preferences: base.preferences,
           databaseViewStates: base.databaseViewStates,
         };
+        if (generation !== workspaceGeneration) return 'pending';
         const nextState = {
           todayTasks: snapshot.todayTasks,
           preferences: snapshot.preferences,
@@ -176,6 +190,7 @@ export function useCloudWorkspace(options: CloudWorkspaceOptions) {
         if (!stateBlocked && JSON.stringify(previousState) !== JSON.stringify(nextState)) {
           try {
             const result = await putCloudState(nextState, state.stateRevision);
+            if (generation !== workspaceGeneration) return 'pending';
             state.stateRevision = result.revision;
             state.baseSnapshot = { ...state.baseSnapshot!, ...nextState };
             await writeCloudLocalState(state);
@@ -185,6 +200,7 @@ export function useCloudWorkspace(options: CloudWorkspaceOptions) {
           }
         }
 
+        if (generation !== workspaceGeneration) return 'pending';
         previousPages.clear();
         nextPages.forEach((page, id) => previousPages.set(id, JSON.parse(JSON.stringify(page)) as WorkspacePage));
         state.baseSnapshot = {
@@ -196,23 +212,23 @@ export function useCloudWorkspace(options: CloudWorkspaceOptions) {
         const hadConflict = blockedPages.size > 0 || stateBlocked;
         if (hadConflict) {
           const remote = await fetchCloudWorkspace();
+          if (generation !== workspaceGeneration) return 'pending';
           conflicts.value = remote.conflicts;
           blockedPages = new Set(remote.conflicts.filter((item) => item.kind === 'page' && item.pageId).map((item) => item.pageId!));
           stateBlocked = remote.conflicts.some((item) => item.kind === 'state');
           state.baseSnapshot = cloneSnapshot(remote.snapshot);
           state.revisions = remote.revisions;
           state.stateRevision = remote.stateRevision;
-          state.pending = true;
           status.value = 'conflict';
-          await writeCloudLocalState(state);
+          await saveStateLocally(true);
           return 'conflict';
         }
-        state.snapshot = cloneSnapshot(snapshot);
-        state.pending = false;
-        status.value = 'synced';
-        await writeCloudLocalState(state);
-        return 'synced';
+        const pending = JSON.stringify(currentSnapshot()) !== serializedSnapshot;
+        status.value = pending ? 'syncing' : 'synced';
+        await saveStateLocally(pending);
+        return pending ? 'pending' : 'synced';
       } catch (error) {
+        if (generation !== workspaceGeneration) return 'pending';
         status.value = 'pending';
         await saveStateLocally(true);
         if (!navigator.onLine) return 'pending';
@@ -238,6 +254,7 @@ export function useCloudWorkspace(options: CloudWorkspaceOptions) {
   }
 
   function acceptResponse(response: CloudWorkspaceResponse, accountOwner: string, lastGuestSnapshot: string | null, pending = false): void {
+    workspaceGeneration += 1;
     owner.value = accountOwner;
     active.value = true;
     conflicts.value = response.conflicts;
@@ -262,6 +279,7 @@ export function useCloudWorkspace(options: CloudWorkspaceOptions) {
   }
 
   async function connect(accountOwner: string, localSnapshot: CloudSnapshot, localStorageExists: boolean): Promise<void> {
+    workspaceGeneration += 1;
     status.value = 'loading';
     ready.value = false;
     pendingImport = null;
@@ -353,6 +371,7 @@ export function useCloudWorkspace(options: CloudWorkspaceOptions) {
   }
 
   function activateGuest(snapshot: CloudSnapshot): void {
+    workspaceGeneration += 1;
     if (debounceTimer !== undefined) window.clearTimeout(debounceTimer);
     debounceTimer = undefined;
     owner.value = null;

@@ -367,8 +367,8 @@ const {
 const cloudSaveLabel = computed(() => {
   if (saveState.value === 'conflict' || cloudWorkspace.status.value === 'conflict') return 'Conflicto por resolver';
   if (saveState.value === 'error') return 'Error al guardar';
-  if (saveState.value === 'saving' || cloudWorkspace.status.value === 'syncing') return 'Sincronizando';
-  if (saveState.value === 'pending' || cloudWorkspace.status.value === 'pending') return 'Pendiente de conexión';
+  if (saveState.value === 'saving' || cloudWorkspace.status.value === 'syncing') return cloudWorkspace.active.value ? 'Sincronizando' : 'Guardando';
+  if (saveState.value === 'pending' || cloudWorkspace.status.value === 'pending') return 'Pendiente de sincronizar';
   return cloudWorkspace.active.value ? 'Sincronizado' : 'Guardado en este dispositivo';
 });
 const {
@@ -423,6 +423,9 @@ function updatePythonCode(pageId: string, code: string): void {
   touchPage(page);
 }
 function syncPageFromHistory(): void { setActive(pageIdFromHash(), false); }
+function flushWhenHidden(): void {
+  if (document.visibilityState === 'hidden') flushPendingChanges();
+}
 function revealSidebar(): void {
   if (sidebarCloseTimer !== undefined) window.clearTimeout(sidebarCloseTimer);
   sidebarCollapsed.value = false;
@@ -746,6 +749,7 @@ onMounted(() => {
   window.addEventListener('keydown', onGlobalKeydown);
   window.addEventListener('popstate', syncPageFromHistory);
   window.addEventListener('pagehide', flushPendingChanges);
+  document.addEventListener('visibilitychange', flushWhenHidden);
   if (isDesktopRuntime()) {
     void getCurrentWindow().onCloseRequested(async (event) => {
       if (desktopCloseInProgress) return;
@@ -791,6 +795,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onGlobalKeydown);
   window.removeEventListener('popstate', syncPageFromHistory);
   window.removeEventListener('pagehide', flushPendingChanges);
+  document.removeEventListener('visibilitychange', flushWhenHidden);
   removeDesktopCloseListener?.();
   flushPendingChanges();
   if (clockTimer !== undefined) window.clearInterval(clockTimer);
@@ -994,7 +999,7 @@ onBeforeUnmount(() => {
     />
 
     <div class="knote-main" :class="{ 'knote-main--inspector': entryInspectorOpen && Boolean(detailEntry && detailPage) }">
-      <header class="knote-topbar">
+      <header class="knote-topbar" :class="{ 'knote-topbar--writing': activePage?.type === 'doc' }">
         <div class="knote-topbar-left">
           <Button class="knote-mobile-nav" variant="glass" color="neutral" size="sm" :prefix-icon="Menu" aria-label="Abrir navegación" @click="mobileSidebarOpen = true" />
           <Breadcrumb :items="breadcrumbItems" separator="slash" size="sm" aria-label="Ubicación actual" @navigate="goBreadcrumb" />
@@ -1002,9 +1007,8 @@ onBeforeUnmount(() => {
         <div class="knote-topbar-actions">
           <div v-if="activePage?.type === 'code'" id="knote-code-actions-target" class="knote-code-actions-target" />
           <template v-else>
-            <Badge v-if="cloudWorkspace.active.value" variant="outline" :color="saveState === 'error' || saveState === 'conflict' ? 'warning' : 'info'" size="sm" class="knote-cloud-save-status" :aria-label="cloudSaveLabel">
-              {{ cloudSaveLabel }}
-            </Badge>
+            <span v-if="activePage?.type === 'doc'" class="knote-document-save-status" :data-state="saveState" role="status">{{ cloudSaveLabel }}</span>
+            <Badge v-else-if="cloudWorkspace.active.value" variant="outline" :color="saveState === 'error' || saveState === 'conflict' ? 'warning' : 'info'" size="sm" class="knote-cloud-save-status" :aria-label="cloudSaveLabel">{{ cloudSaveLabel }}</Badge>
             <Button v-if="cloudWorkspace.conflicts.value.length" variant="soft" color="destructive" size="sm" :disabled="cloudWorkspace.isResolving.value" @click="conflictDialogOpen = true">Revisar conflicto</Button>
             <Button v-if="activePage" variant="soft" color="neutral" size="sm" :prefix-icon="Link2" aria-label="Compartir documento" title="Controla si este documento sigue privado o se publica con un enlace." class="knote-topbar-copy-link" @click="shareDialogOpen = true">Compartir</Button>
             <Button v-if="activePage" variant="soft" color="neutral" size="sm" :prefix-icon="Star" :aria-label="activePage.favorite ? 'Quitar de favoritos' : 'Añadir a favoritos'" :title="activePage.favorite ? 'Quitar de favoritos' : 'Añadir a favoritos'" :class="{ 'knote-is-favorite': activePage.favorite }" @click="toggleFavorite(activePage)" />
@@ -1015,7 +1019,7 @@ onBeforeUnmount(() => {
         </div>
       </header>
 
-      <main :class="['knote-canvas', { 'knote-canvas--home': !activePage, 'knote-canvas--board': activePage?.type === 'board' || activePage?.type === 'database', 'knote-canvas--calendar': activePage?.type === 'calendar', 'knote-canvas--document': activePage?.type === 'doc' || activePage?.type === 'folder', 'knote-canvas--code': activePage?.type === 'code' }]">
+      <main :class="['knote-canvas', { 'knote-canvas--home': !activePage, 'knote-canvas--board': activePage?.type === 'board' || activePage?.type === 'database', 'knote-canvas--calendar': activePage?.type === 'calendar', 'knote-canvas--document': activePage?.type === 'doc' || activePage?.type === 'folder', 'knote-canvas--writing': activePage?.type === 'doc', 'knote-canvas--code': activePage?.type === 'code' }]">
         <HomeDashboard
           v-if="!activePage"
           v-model:quick-capture="quickCapture"
@@ -1100,12 +1104,12 @@ onBeforeUnmount(() => {
             <div class="knote-page-glyph knote-page-glyph-controls">
               <PageIconPicker :id="'page-icon-' + activePage.id" :label="'Personalizar icono de ' + activePage.title" :icon="pageIcon(activePage)" :icon-id="activePage.icon" :options="pageIconOptions" :color="activePage.iconColor" @update:icon-id="setPageIcon" @update:color="setPageIconColor" />
             </div>
-            <Badge variant="outline" color="secondary" size="sm">{{ pageTypeLabel(activePage.type).toUpperCase() }}</Badge>
+            <Badge v-if="activePage.type !== 'doc'" variant="outline" color="secondary" size="sm">{{ pageTypeLabel(activePage.type).toUpperCase() }}</Badge>
             <Input :id="'title-' + activePage.id" v-model="activePage.title" label="Título de la página" placeholder="Sin título" size="md" variant="surface" class="knote-title-field" @update:model-value="touchPage(activePage)" />
           </header>
 
           <template v-if="activePage.type === 'doc'">
-            <BlockEditor :key="activePage.id + '-document-content'" v-model="activePage.content" :page-id="activePage.id" placeholder="Empieza a escribir…" class="knote-document-editor" @update:model-value="touchPage(activePage)" />
+            <BlockEditor :key="activePage.id + '-document-content'" v-model="activePage.content" :page-id="activePage.id" placeholder="Empieza a escribir…" class="knote-document-editor" document-controls @update:model-value="touchPage(activePage)" />
           </template>
           <template v-else>
             <BlockEditor :key="activePage.id + '-page-content'" v-model="activePage.content" :page-id="activePage.id" :placeholder="activePage.type === 'calendar' ? 'Fechas y eventos de tu espacio…' : 'Organiza aquí el trabajo y las ideas del proyecto…'" class="knote-page-summary-editor" @update:model-value="touchPage(activePage)" />

@@ -196,6 +196,7 @@ onBeforeUnmount(() => {
       ref="trigger"
       type="button"
       :disabled="props.disabled"
+      :aria-label="props.label"
       :aria-expanded="model"
       :aria-controls="props.id"
       aria-haspopup="menu"
