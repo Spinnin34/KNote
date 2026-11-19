@@ -9,7 +9,7 @@ import { basicSetup } from 'codemirror';
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
 import { EditorView, hoverTooltip, keymap, type Tooltip } from '@codemirror/view';
-import { AlertCircle, ArrowDown, ArrowUp, BookOpen, Check, Code2, Download, LayoutPanelTop, LoaderCircle, MoreHorizontal, PanelBottom, PanelRight, Play, Search, Square, Terminal, Trash2, Upload } from '@lucide/vue';
+import { AlertCircle, ArrowDown, ArrowUp, BookOpen, Check, ChevronDown, ChevronUp, Code2, Download, LayoutPanelTop, LoaderCircle, MoreHorizontal, PanelBottom, PanelRight, Play, Replace, Search, Square, Terminal, Trash2, Upload, X } from '@lucide/vue';
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import Attachment, { type AttachmentRejection } from '@/components/ui/Attachment.vue';
 import Badge from '@/components/ui/Badge.vue';
@@ -68,13 +68,12 @@ const diagnostics = ref<CodeDiagnostic[]>([]);
 const problemsOpen = ref(false);
 const errorDiagnostics = computed(() => diagnostics.value.filter((diagnostic) => diagnostic.severity === 'error'));
 const warningCount = computed(() => diagnostics.value.filter((diagnostic) => diagnostic.severity === 'warning').length);
-const visibleDiagnostics = computed(() => diagnostics.value.slice(0, 5));
-const hiddenDiagnosticCount = computed(() => Math.max(0, diagnostics.value.length - visibleDiagnostics.value.length));
 const diagnosticsPending = ref(false);
 const diagnosticsNotice = ref('');
 const typeAnalysisComplete = ref(false);
 const signatureHelp = ref('');
 const searchOpen = ref(false);
+const replaceOpen = ref(false);
 const searchText = ref('');
 const replaceText = ref('');
 const searchCaseSensitive = ref(false);
@@ -106,8 +105,15 @@ const panelSize = computed({
   set: (size: number) => { (consoleDockedRight.value ? rightSize : bottomSize).value = Math.round(size); },
 });
 const stackedPanelStyle = computed(() => consoleDockedRight.value || !consoleVisible.value ? undefined : {
-  gridTemplateRows: `minmax(0, ${panelSize.value}fr) auto minmax(6.5rem, ${100 - panelSize.value}fr)`,
+  gridTemplateRows: `minmax(var(--knote-code-editor-min), ${panelSize.value}fr) auto minmax(var(--knote-code-console-min), ${100 - panelSize.value}fr)`,
 });
+const panelClasses = computed(() => ({
+  'knote-code-panels--editor-only': !consoleVisible.value,
+  'knote-code-panels--search': searchOpen.value,
+  'knote-code-panels--replace': replaceOpen.value,
+  'knote-code-panels--problems': problemsOpen.value && diagnostics.value.length > 0,
+  'knote-code-panels--input': inputSessionStarted.value,
+}));
 const layoutItems = computed<readonly MenuItem[]>(() => [
   { id: 'bottom', type: 'radio', group: 'console', label: 'Consola abajo', icon: PanelBottom, checked: consoleVisible.value && !consoleDockedRight.value },
   { id: 'right', type: 'radio', group: 'console', label: 'Consola a la derecha', icon: PanelRight, checked: consoleDockedRight.value, disabled: !canDockRight.value },
@@ -134,6 +140,7 @@ const activeFileName = computed(() => importedFileName.value || `${suggestFileSt
 let layoutSaveTimer: number | undefined;
 const pendingRequests = new Map<number, (result: DiagnosticResult | null) => void>();
 let consoleLineId = 0;
+let followConsole = true;
 let diagnosticsTimer: number | undefined;
 let signatureTimer: number | undefined;
 let modelSyncTimer: number | undefined;
@@ -217,24 +224,36 @@ function scheduleSearchMatchRefresh(): void {
 async function openFind(withReplace = false): Promise<void> {
   if (!editor.value) return;
   searchOpen.value = true;
+  problemsOpen.value = false;
+  if (withReplace) replaceOpen.value = true;
   if (!searchText.value && !editor.value.state.selection.main.empty) {
     searchText.value = editor.value.state.sliceDoc(editor.value.state.selection.main.from, editor.value.state.selection.main.to);
   }
   updateSearchQuery();
   await nextTick();
-  const target = document.getElementById(`python-search-${props.pageId}`) as HTMLInputElement | null;
-  target?.focus();
-  if (withReplace) (document.getElementById(`python-replace-${props.pageId}`) as HTMLInputElement | null)?.focus();
+  const field = withReplace ? 'replace' : 'search';
+  document.getElementById(`python-${field}-${props.pageId}`)?.focus();
 }
 
-function closeFind(): void {
+function closeFind(restoreFocus = true): void {
   searchOpen.value = false;
+  replaceOpen.value = false;
   const view = editor.value;
   if (view) {
     view.dispatch({ effects: setSearchQuery.of(new SearchQuery({ search: '' })) });
-    view.focus();
+    if (restoreFocus) view.focus();
   }
   searchMatchCount.value = 0;
+}
+
+function toggleReplace(): void {
+  if (replaceOpen.value) replaceOpen.value = false;
+  else void openFind(true);
+}
+
+function toggleProblems(): void {
+  if (searchOpen.value) closeFind(false);
+  problemsOpen.value = !problemsOpen.value;
 }
 
 function navigateSearch(direction: 1 | -1): void {
@@ -254,10 +273,14 @@ function replaceSearchMatch(all = false): void {
 }
 
 function handleSearchKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape') {
+  if (event.isComposing) return;
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'h') {
+    event.preventDefault();
+    void openFind(true);
+  } else if (event.key === 'Escape') {
     event.preventDefault();
     closeFind();
-  } else if (event.key === 'Enter' && event.target instanceof HTMLInputElement && !event.isComposing) {
+  } else if (event.key === 'Enter' && event.target instanceof HTMLInputElement) {
     event.preventDefault();
     if (event.target.id === `python-replace-${props.pageId}`) replaceSearchMatch();
     else navigateSearch(event.shiftKey ? -1 : 1);
@@ -317,6 +340,7 @@ function runScript(): boolean {
     appendConsole('system', 'La ejecución anterior todavía se está deteniendo. Vuelve a intentarlo en un momento.');
     return true;
   }
+  followConsole = true;
   consoleLines.value = [];
   executionError.value = '';
   executionErrorLine.value = null;
@@ -356,7 +380,14 @@ function submitInput(): void {
   focusConsoleInput();
 }
 
+function trackConsoleScroll(): void {
+  const view = consoleScroll.value;
+  if (!view || !consoleVisible.value) return;
+  followConsole = view.scrollHeight - view.scrollTop - view.clientHeight < 4;
+}
+
 function clearConsole(): void {
+  followConsole = true;
   consoleLines.value = [];
   executionError.value = '';
   executionErrorLine.value = null;
@@ -927,8 +958,10 @@ watch(() => props.code, (nextValue) => {
   view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: nextValue } });
 });
 
-watch([consoleLines, consoleVisible], () => {
-  if (consoleScroll.value && consoleVisible.value) consoleScroll.value.scrollTop = consoleScroll.value.scrollHeight;
+watch([waitingForInput, consoleLines, consoleVisible, inputSessionStarted, panelSize, consoleDockedRight], ([waiting], [wasWaiting]) => {
+  if (waiting && !wasWaiting) followConsole = true;
+  const view = consoleScroll.value;
+  if (view && consoleVisible.value && followConsole) view.scrollTop = view.scrollHeight;
 }, { flush: 'post' });
 
 const dialogOpen = computed(() => exportModalOpen.value || importModalOpen.value || pythonGuideOpen.value);
@@ -990,8 +1023,16 @@ onBeforeUnmount(() => {
         <DropdownMenu :id="`python-layout-${pageId}`" label="Distribución del editor" align="end" variant="surface" :items="layoutItems" @select="changeLayout">
           <template #trigger><Icon :icon="!consoleVisible ? LayoutPanelTop : consoleDockedRight ? PanelRight : PanelBottom" size="sm" /><span class="knote-code-layout-label" aria-hidden="true">Distribución</span><span class="sr-only">Distribución del editor</span></template>
         </DropdownMenu>
-        <Button v-if="!running" variant="solid" color="primary" size="sm" :prefix-icon="Play" aria-label="Ejecutar Python" title="Ejecutar Python" :disabled="runtimeState !== 'ready'" @click="runScript">Ejecutar <kbd>{{ runShortcut }}</kbd></Button>
-        <Button v-else variant="soft" color="destructive" size="sm" :prefix-icon="Square" aria-label="Detener ejecución" :disabled="stopping" @click="stopScript">{{ stopping ? 'Deteniendo…' : 'Detener' }}</Button>
+        <Button
+          :variant="running ? 'soft' : 'solid'"
+          :color="running ? 'destructive' : 'primary'"
+          size="sm"
+          :prefix-icon="running ? Square : Play"
+          :aria-label="running ? 'Detener ejecución' : 'Ejecutar Python'"
+          :aria-keyshortcuts="running ? undefined : runShortcut === '⌘↵' ? 'Meta+Enter' : 'Control+Enter'"
+          :disabled="running ? stopping : runtimeState !== 'ready'"
+          @click="running ? stopScript() : runScript()"
+        >{{ stopping ? 'Deteniendo…' : running ? 'Detener' : 'Ejecutar' }}<kbd v-if="!running">{{ runShortcut }}</kbd></Button>
       </div>
     </Teleport>
 
@@ -1014,7 +1055,7 @@ onBeforeUnmount(() => {
       rounded="none"
       class="knote-code-panels"
       :style="stackedPanelStyle"
-      :class="{ 'knote-code-panels--editor-only': !consoleVisible }"
+      :class="panelClasses"
     >
       <template #first>
         <div class="knote-code-editor-panel">
@@ -1037,7 +1078,7 @@ onBeforeUnmount(() => {
                 :prefix-icon="AlertCircle"
                 :aria-expanded="problemsOpen"
                 :aria-controls="`python-problems-${pageId}`"
-                @click="problemsOpen = !problemsOpen"
+                @click="toggleProblems"
               >{{ diagnostics.length }} {{ diagnostics.length === 1 ? 'problema' : 'problemas' }}</Button>
             </div>
           </div>
@@ -1046,34 +1087,35 @@ onBeforeUnmount(() => {
               <strong>{{ errorDiagnostics.length }} {{ errorDiagnostics.length === 1 ? 'error' : 'errores' }}<span v-if="warningCount"> · {{ warningCount }} {{ warningCount === 1 ? 'aviso' : 'avisos' }}</span></strong>
               <Button v-if="errorDiagnostics.length" variant="soft" color="destructive" size="sm" @click="jumpToDiagnostic(1)">Siguiente <kbd>F8</kbd></Button>
             </div>
-            <div class="knote-code-problems-list">
-              <Button v-for="issue in visibleDiagnostics" :key="`${issue.source}-${issue.from}-${issue.message}`" variant="soft" :color="issue.severity === 'error' ? 'destructive' : 'neutral'" size="sm" class="knote-code-problem" :title="issue.message" @click="focusDiagnostic(issue)">
-                <span class="knote-code-problem-line">L{{ issue.line }}</span><span class="knote-code-problem-message">{{ issue.message }}</span>
-              </Button>
-              <span v-if="hiddenDiagnosticCount" class="knote-code-problems-more">+{{ hiddenDiagnosticCount }} más</span>
-            </div>
+            <ul v-if="problemsOpen" class="knote-code-problems-list">
+              <li v-for="issue in diagnostics" :key="`${issue.source}-${issue.from}-${issue.message}`">
+                <Button variant="soft" :color="issue.severity === 'error' ? 'destructive' : 'neutral'" size="sm" class="knote-code-problem" @click="focusDiagnostic(issue)">
+                  <span class="knote-code-problem-line" aria-hidden="true">L{{ issue.line }}</span>
+                  <span class="sr-only">{{ issue.severity === 'error' ? 'Error' : 'Aviso' }} en línea {{ issue.line }}.</span>
+                  <span class="knote-code-problem-message">{{ issue.message }}</span>
+                </Button>
+              </li>
+            </ul>
           </div>
           <div v-if="searchOpen" class="knote-code-search" role="search" aria-label="Buscar y reemplazar en el script" @keydown="handleSearchKeydown">
             <div class="knote-code-search-row">
-              <div class="knote-code-search-field">
-                <Icon :icon="Search" size="sm" aria-hidden="true" />
-                <Input :id="`python-search-${pageId}`" v-model="searchText" label="Buscar en el código" placeholder="Buscar en el código…" size="sm" variant="surface" @update:model-value="updateSearchQuery" />
-              </div>
-              <span v-if="searchText" class="knote-code-search-count" :class="{ 'knote-code-search-count--invalid': searchQueryInvalid }" aria-live="polite">{{ searchResultLabel }}</span>
-              <Button variant="soft" color="neutral" size="sm" :disabled="!searchMatchCount" aria-label="Coincidencia anterior" title="Coincidencia anterior (Shift+Enter)" @click="navigateSearch(-1)">Anterior</Button>
-              <Button variant="soft" color="neutral" size="sm" :disabled="!searchMatchCount" aria-label="Coincidencia siguiente" title="Coincidencia siguiente (Enter)" @click="navigateSearch(1)">Siguiente</Button>
-              <Button variant="soft" color="neutral" size="sm" shape="fab" aria-label="Cerrar búsqueda" title="Cerrar (Esc)" @click="closeFind">×</Button>
+              <Input :id="`python-search-${pageId}`" v-model="searchText" label="Buscar en el código" placeholder="Buscar en el código…" size="sm" variant="surface" @update:model-value="updateSearchQuery" />
+              <Button variant="soft" color="neutral" size="sm" shape="fab" :prefix-icon="ChevronUp" :disabled="!searchMatchCount || searchQueryInvalid" aria-label="Coincidencia anterior" title="Coincidencia anterior (Mayús+Intro)" @click="navigateSearch(-1)" />
+              <Button variant="soft" color="neutral" size="sm" shape="fab" :prefix-icon="ChevronDown" :disabled="!searchMatchCount || searchQueryInvalid" aria-label="Coincidencia siguiente" title="Coincidencia siguiente (Intro)" @click="navigateSearch(1)" />
+              <Button variant="soft" color="neutral" size="sm" shape="fab" :prefix-icon="Replace" :aria-label="replaceOpen ? 'Ocultar reemplazo' : 'Mostrar reemplazo'" :title="replaceOpen ? 'Ocultar reemplazo' : 'Mostrar reemplazo'" :aria-expanded="replaceOpen" :aria-controls="`python-replace-row-${pageId}`" @click="toggleReplace" />
+              <Button variant="soft" color="neutral" size="sm" shape="fab" :prefix-icon="X" aria-label="Cerrar búsqueda" title="Cerrar búsqueda (Esc)" @click="closeFind()" />
             </div>
-            <div class="knote-code-search-row knote-code-search-row--replace">
-              <div class="knote-code-search-field knote-code-search-field--replace">
-                <Input :id="`python-replace-${pageId}`" v-model="replaceText" label="Reemplazar por" placeholder="Reemplazar por…" size="sm" variant="surface" @update:model-value="updateSearchQuery" />
-              </div>
+            <div v-show="replaceOpen" :id="`python-replace-row-${pageId}`" class="knote-code-search-row">
+              <Input :id="`python-replace-${pageId}`" v-model="replaceText" label="Reemplazar por" placeholder="Reemplazar por…" size="sm" variant="surface" @update:model-value="updateSearchQuery" />
               <Button variant="soft" color="neutral" size="sm" :disabled="!searchMatchCount || searchQueryInvalid" @click="replaceSearchMatch()">Reemplazar</Button>
               <Button variant="soft" color="primary" size="sm" :disabled="!searchMatchCount || searchQueryInvalid" @click="replaceSearchMatch(true)">Reemplazar todo</Button>
+            </div>
+            <div class="knote-code-search-options">
+              <span class="knote-code-search-count" :class="{ 'knote-code-search-count--invalid': searchQueryInvalid }" aria-live="polite">{{ searchResultLabel }}</span>
               <div class="knote-code-search-toggles" role="group" aria-label="Opciones de búsqueda">
-                <Button variant="soft" color="neutral" size="sm" :aria-pressed="searchCaseSensitive" :class="{ 'knote-code-search-toggle--active': searchCaseSensitive }" title="Distinguir mayúsculas y minúsculas" @click="searchCaseSensitive = !searchCaseSensitive; updateSearchQuery()">Aa</Button>
-                <Button variant="soft" color="neutral" size="sm" :aria-pressed="searchWholeWord" :class="{ 'knote-code-search-toggle--active': searchWholeWord }" title="Buscar palabra completa" @click="searchWholeWord = !searchWholeWord; updateSearchQuery()">Palabra</Button>
-                <Button variant="soft" color="neutral" size="sm" :aria-pressed="searchRegexp" :class="{ 'knote-code-search-toggle--active': searchRegexp }" title="Usar expresión regular" @click="searchRegexp = !searchRegexp; updateSearchQuery()">.*</Button>
+                <Button variant="soft" color="neutral" size="sm" :aria-pressed="searchCaseSensitive" aria-label="Distinguir mayúsculas y minúsculas" title="Distinguir mayúsculas y minúsculas" @click="searchCaseSensitive = !searchCaseSensitive; updateSearchQuery()">Aa</Button>
+                <Button variant="soft" color="neutral" size="sm" :aria-pressed="searchWholeWord" aria-label="Buscar palabra completa" title="Buscar palabra completa" @click="searchWholeWord = !searchWholeWord; updateSearchQuery()">Palabra</Button>
+                <Button variant="soft" color="neutral" size="sm" :aria-pressed="searchRegexp" aria-label="Usar expresión regular" title="Usar expresión regular" @click="searchRegexp = !searchRegexp; updateSearchQuery()">.*</Button>
               </div>
             </div>
           </div>
@@ -1088,16 +1130,22 @@ onBeforeUnmount(() => {
           <div class="knote-code-console-heading">
             <div><Icon :icon="Terminal" size="sm" /><strong>Consola</strong></div>
             <div class="knote-code-console-actions">
-              <Badge v-if="running" variant="soft" color="warning" size="sm" role="status">{{ stopping ? 'Deteniendo…' : waitingForInput ? 'Esperando entrada' : 'Ejecutando' }}</Badge>
-              <Button variant="soft" color="neutral" size="sm" shape="fab" :prefix-icon="Trash2" aria-label="Limpiar consola" title="Limpiar consola" @click="clearConsole" />
+              <Badge v-if="running" variant="soft" color="warning" size="sm" role="status">
+                <template v-if="waitingForInput">
+                  <span class="knote-code-input-status-full">Esperando entrada</span>
+                  <span aria-hidden="true" class="knote-code-input-status-short">Entrada</span>
+                </template>
+                <template v-else>{{ stopping ? 'Deteniendo…' : 'Ejecutando' }}</template>
+              </Badge>
+              <Button variant="soft" color="neutral" size="sm" shape="fab" :prefix-icon="Trash2" aria-label="Limpiar consola" title="Limpiar consola" :disabled="!consoleLines.length || waitingForInput" @click="clearConsole" />
             </div>
           </div>
-          <div ref="consoleScroll" class="knote-code-console-scroll" role="log" aria-label="Salida de Python" aria-live="polite" aria-relevant="additions text">
+          <div ref="consoleScroll" class="knote-code-console-scroll" role="log" aria-label="Salida de Python" aria-live="polite" aria-relevant="additions text" tabindex="0" @scroll.passive="trackConsoleScroll">
             <pre v-for="entry in consoleLines" :key="entry.id" :class="['knote-code-console-line', `knote-code-console-line--${entry.kind}`]">{{ entry.text }}</pre>
             <p v-if="consoleLines.length === 0" class="knote-code-console-empty">Ejecuta el script para ver la salida.</p>
           </div>
           <form v-if="inputSessionStarted" ref="consoleInput" class="knote-code-input-row" @submit.prevent="submitInput">
-            <Input :id="`python-input-${pageId}`" v-model="inputValue" label="Entrada de Python" placeholder="Escribe una respuesta…" autocomplete="off" size="sm" variant="surface" />
+            <Input :id="`python-input-${pageId}`" v-model="inputValue" label="Entrada de Python" placeholder="Respuesta…" autocomplete="off" size="sm" variant="surface" />
             <Button type="submit" variant="solid" color="primary" size="sm" :disabled="!waitingForInput">Enviar</Button>
           </form>
         </div>

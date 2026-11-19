@@ -1,7 +1,6 @@
 .knote-code-workspace {
   --knote-code-editor-surface: var(--balsa-role-background);
   --knote-code-raised-surface: color-mix(in oklab, var(--balsa-role-surface) 82%, var(--balsa-role-background));
-  --knote-code-error: var(--balsa-role-destructive);
   --knote-code-syntax-keyword: color-mix(in oklab, var(--balsa-role-accent) 68%, var(--balsa-role-code-foreground));
   --knote-code-syntax-variable: color-mix(in oklab, var(--balsa-role-code-foreground) 92%, var(--balsa-role-accent));
   --knote-code-syntax-title: color-mix(in oklab, var(--balsa-role-accent) 58%, var(--balsa-role-code-foreground));
@@ -47,12 +46,21 @@
 .knote-code-execution-error span { overflow: hidden; color: var(--balsa-role-foreground); text-overflow: ellipsis; white-space: nowrap; }
 .knote-code-execution-error [data-balsa="button"] { flex: 0 0 auto; }
 .knote-code-panels {
+  --knote-code-editor-min: 10rem;
+  --knote-code-console-min: 6.5rem;
   min-height: 23rem;
   flex: 1 1 auto;
   border: 1px solid var(--balsa-role-border);
   border-radius: .5rem;
   background: var(--knote-code-editor-surface);
 }
+.knote-code-panels[data-orientation="vertical"]:not(.knote-code-panels--editor-only) {
+  min-height: max(23rem, calc(var(--knote-code-editor-min) + var(--knote-code-console-min) + .875rem));
+}
+.knote-code-panels--search { --knote-code-editor-min: 15.5rem; }
+.knote-code-panels--replace { --knote-code-editor-min: 18rem; }
+.knote-code-panels--problems { --knote-code-editor-min: 16.5rem; }
+.knote-code-panels--input { --knote-code-console-min: 10.75rem; }
 .knote-code-panels > [data-balsa="resizable-panel"] { min-height: 0; overflow: hidden; }
 .knote-code-panels > [data-balsa="resizable-handle"] {
   background: var(--knote-code-raised-surface);
@@ -114,64 +122,91 @@
 .knote-code-editor-host .cm-searchMatch-selected { background: color-mix(in oklab, var(--balsa-role-accent) 48%, transparent) !important; }
 .knote-code-search {
   display: grid;
-  gap: .35rem;
+  flex: 0 0 auto;
+  gap: .3rem;
   padding: .45rem .7rem;
   border-bottom: 1px solid var(--balsa-role-border);
-  background: color-mix(in oklab, var(--balsa-role-surface) 62%, var(--knote-code-editor-surface));
+  background: var(--knote-code-raised-surface);
 }
-.knote-code-search-row { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: .38rem; }
-.knote-code-search-field { display: flex; min-width: 10rem; flex: 1 1 16rem; align-items: center; gap: .45rem; }
-.knote-code-search-field > svg { flex: 0 0 auto; color: var(--balsa-role-secondary); }
-.knote-code-search-field [data-balsa="input"] { min-width: 0; flex: 1 1 auto; }
-.knote-code-search-field [data-balsa="input"] > label {
+.knote-code-search-row, .knote-code-search-options {
+  display: flex;
+  min-width: 0;
+  max-width: 46rem;
+  align-items: center;
+  gap: .3rem;
+}
+.knote-code-search-row > [data-balsa="input"] { min-width: 0; flex: 1 1 auto; }
+.knote-code-search-row > [data-balsa="input"] > label {
   position: absolute;
   width: 1px;
   height: 1px;
   overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
   clip-path: inset(50%);
+  white-space: nowrap;
 }
-.knote-code-search-field [data-balsa-control] { min-height: 1.95rem; padding-block: .3rem; font-size: .68rem; }
-.knote-code-search-count { min-width: 7.4rem; color: var(--balsa-role-secondary); font-size: .63rem; white-space: nowrap; }
+.knote-code-search-row [data-balsa-control] { min-height: 2rem; padding-block: .3rem; font-size: .8rem; }
+.knote-code-search-count {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-left: .25rem;
+  color: var(--balsa-role-secondary);
+  font-size: .72rem;
+}
 .knote-code-search-count--invalid { color: var(--balsa-role-destructive); }
-.knote-code-search [data-balsa="button"] { min-height: 1.9rem; padding-inline: .55rem; font-size: .62rem; white-space: nowrap; }
-.knote-code-search-row--replace { padding-left: 1.5rem; }
-.knote-code-search-field--replace { flex-basis: 19rem; }
-.knote-code-search-toggles { display: flex; align-items: center; gap: .2rem; margin-left: auto; }
-.knote-code-search .knote-code-search-toggle--active { color: var(--balsa-role-accent); background: color-mix(in oklab, var(--balsa-role-accent) 12%, var(--balsa-role-surface)); }
-.knote-code-search [data-balsa="button"]:focus-visible { outline: 2px solid var(--balsa-role-focus-ring); outline-offset: 2px; }
-.knote-code-search .knote-code-search-row:first-child [data-balsa="button"][aria-label="Cerrar búsqueda"] { width: 1.9rem; padding-inline: 0; font-size: 1rem; }
-.knote-code-problems {
-  display: flex;
-  min-height: 2.1rem;
-  align-items: center;
-  gap: .7rem;
-  padding: .18rem .75rem;
-  border-bottom: 1px solid color-mix(in oklab, var(--balsa-role-destructive) 24%, var(--balsa-role-border));
-  background: color-mix(in oklab, var(--balsa-role-destructive) 4%, var(--knote-code-editor-surface));
+.knote-code-search [data-balsa="button"] { min-height: 2rem; flex: 0 0 auto; padding-inline: .5rem; font-size: .72rem; white-space: nowrap; }
+.knote-code-search-row:first-child [data-balsa="button"] { width: 2rem; padding-inline: 0; }
+.knote-code-search-row:first-child [data-balsa="button"] > svg { width: 1rem; height: 1rem; }
+.knote-code-search-toggles { display: flex; flex: 0 0 auto; align-items: center; gap: .15rem; }
+.knote-code-search-toggles [data-balsa="button"][aria-pressed="true"] {
+  color: var(--balsa-role-accent);
+  background: color-mix(in oklab, var(--balsa-role-accent) 16%, var(--balsa-role-surface));
+  box-shadow: inset 0 0 0 1px currentColor;
 }
-.knote-code-problems-heading { display: flex; flex: 0 0 auto; align-items: center; gap: .35rem; color: var(--balsa-role-destructive); font-size: .62rem; }
-.knote-code-problems-heading > strong { font-weight: 650; white-space: nowrap; }
-.knote-code-problems-heading [data-balsa="button"] { min-height: 1.55rem; padding-inline: .45rem; font-size: .59rem; }
-.knote-code-problems-heading span { color: var(--balsa-role-warning); }
-.knote-code-problems-list { display: flex; min-width: 0; flex: 1 1 auto; align-items: center; gap: .2rem; overflow-x: auto; }
-.knote-code-problem { min-width: 0; min-height: 1.65rem !important; flex: 0 1 auto; gap: .35rem; padding-inline: .4rem !important; font-size: .6rem !important; }
-.knote-code-problem-line { flex: 0 0 auto; color: var(--balsa-role-secondary); font-variant-numeric: tabular-nums; }
-.knote-code-problem-message { overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
-.knote-code-problems-more { flex: 0 0 auto; color: var(--balsa-role-secondary); font-size: .6rem; }
+.knote-code-search [data-balsa="button"]:focus-visible { outline: 2px solid var(--balsa-role-focus-ring); outline-offset: 1px; }
+.knote-code-problems {
+  display: grid;
+  flex: 0 0 auto;
+  gap: .35rem;
+  padding: .4rem .7rem;
+  border-bottom: 1px solid var(--balsa-role-border);
+  background: var(--knote-code-raised-surface);
+}
+.knote-code-problems-heading { display: flex; align-items: center; justify-content: space-between; gap: .4rem; font-size: .75rem; }
+.knote-code-problems-heading > strong { font-weight: 650; }
+.knote-code-problems-heading [data-balsa="button"] { min-height: 1.8rem; padding-inline: .45rem; font-size: .68rem; }
+.knote-code-problems-heading kbd { margin-left: .25rem; color: var(--balsa-role-secondary); font: inherit; }
+.knote-code-problems-list {
+  display: grid;
+  max-block-size: 6.25rem;
+  gap: .25rem;
+  overflow: auto;
+  overscroll-behavior: contain;
+  margin: 0;
+  padding: .15rem;
+  list-style: none;
+}
+.knote-code-problems-list > li { min-width: 0; }
+.knote-code-problem {
+  width: 100%;
+  min-height: 1.85rem;
+  justify-content: flex-start;
+  gap: .5rem;
+  padding-inline: .55rem;
+  font-size: .74rem;
+}
+.knote-code-problem-line { flex: 0 0 auto; color: var(--balsa-role-secondary); font-family: var(--balsa-font-mono, Consolas, monospace); }
+.knote-code-problem-message { overflow-wrap: anywhere; text-align: left; white-space: normal; }
 .knote-code-statusbar {
   display: flex;
-  min-height: 1.55rem;
+  min-height: 1.65rem;
   flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
   gap: .75rem;
-  padding: 0 .8rem .08rem;
-  border-top: 0;
-  background: transparent;
+  padding: 0 .8rem;
+  border-top: 1px solid var(--balsa-role-border);
   color: var(--balsa-role-secondary);
-  font-size: .57rem;
+  font-size: .67rem;
   font-variant-numeric: tabular-nums;
 }
 .knote-code-signature {
@@ -191,22 +226,24 @@
   white-space: nowrap;
   box-shadow: 0 8px 20px #0004;
 }
-.knote-code-console-heading { min-height: 2rem; flex-wrap: wrap; gap: .15rem .4rem; }
+.knote-code-console-heading { min-height: 2.4rem; flex-wrap: wrap; gap: .15rem .4rem; }
 .knote-code-console-heading > div:first-child, .knote-code-console-actions { display: flex; align-items: center; gap: .5rem; }
 .knote-code-console-heading > div:first-child > svg { color: var(--balsa-role-accent); }
-.knote-code-console-heading strong { color: var(--balsa-role-foreground); font-size: .66rem; font-weight: 640; }
-.knote-code-console-heading span { color: var(--balsa-role-secondary); font-size: .59rem; }
+.knote-code-console-heading strong { color: var(--balsa-role-foreground); font-size: .76rem; font-weight: 640; }
+.knote-code-input-status-short { display: none; }
 .knote-code-console-actions [data-balsa="button"] { width: 1.85rem; min-height: 1.85rem; color: var(--balsa-role-secondary); }
-.knote-code-console-actions [data-balsa="badge"] { font-size: .56rem; }
+.knote-code-console-actions [data-balsa="badge"] { font-size: .66rem; }
 .knote-code-console-scroll {
   min-height: 0;
   flex: 1 1 auto;
   overflow: auto;
-  padding: .65rem .85rem;
+  overscroll-behavior: contain;
+  padding: .5rem .85rem;
   color: var(--balsa-role-foreground);
   font: .8rem/1.55 var(--balsa-font-mono, "Cascadia Code", Consolas, monospace);
   scrollbar-color: color-mix(in oklab, var(--balsa-role-secondary) 50%, transparent) transparent;
 }
+.knote-code-console-scroll:focus-visible { outline: 2px solid var(--balsa-role-focus-ring); outline-offset: -2px; }
 .knote-code-console-line { margin: 0 0 .25rem; overflow-wrap: anywhere; white-space: pre-wrap; }
 .knote-code-console-line--output { color: var(--balsa-role-foreground); }
 .knote-code-console-line--error { color: var(--balsa-role-destructive); }
@@ -223,7 +260,7 @@
   background: var(--knote-code-raised-surface);
 }
 .knote-code-input-row [data-balsa="input"] { min-width: 0; flex: 1 1 auto; }
-.knote-code-input-row [data-balsa="input"] label { margin-bottom: .18rem; color: var(--balsa-role-secondary); font-size: .58rem; }
+.knote-code-input-row [data-balsa="input"] label { margin-bottom: .18rem; color: var(--balsa-role-secondary); font-size: .7rem; }
 .knote-code-input-row [data-balsa="input"] input { min-height: 2rem; border-color: var(--balsa-role-border); background: var(--balsa-role-background); color: var(--balsa-role-foreground); font-size: .82rem; }
 .knote-code-input-row [data-balsa="button"] { min-height: 2rem; flex: 0 0 auto; font-size: .65rem; }
 .knote-python-hover { max-width: min(29rem, 72vw); padding: .55rem .7rem; }
@@ -244,23 +281,25 @@
 }
 
 @container (max-width: 38rem) {
-  .knote-code-search { gap: .42rem; padding: .42rem .5rem; }
-  .knote-code-search-count { min-width: 0; margin-left: auto; }
-  .knote-code-search-row--replace { padding-left: 0; }
-  .knote-code-search-toggles { margin-left: auto; }
   .knote-code-statusbar > span:last-child { display: none; }
 }
 @container (max-width: 28rem) {
   .knote-code-syntax-status { display: none; }
 }
 @container (max-width: 23rem) {
-  .knote-code-search-row { gap: .28rem; }
-  .knote-code-search-count { flex: 1 1 100%; order: 1; margin-left: .2rem; }
-  .knote-code-search-toggles { width: 100%; margin-left: 0; }
-  .knote-code-search-toggles [data-balsa="button"] { flex: 1 1 auto; }
-  .knote-code-statusbar { padding-inline: .55rem; }
-  .knote-code-filebar, .knote-code-console-heading { padding-inline: .5rem; gap: .4rem; }
-  .knote-code-input-row { padding-inline: .5rem; }
+  .knote-code-search, .knote-code-problems { padding-inline: .45rem; }
+  .knote-code-search [data-balsa="button"] { padding-inline: .36rem; }
+  .knote-code-search-row:first-child [data-balsa="button"] { padding-inline: 0; }
+  .knote-code-statusbar, .knote-code-filebar, .knote-code-console-heading, .knote-code-input-row { padding-inline: .5rem; gap: .35rem; }
+}
+@container (max-width: 16rem) {
+  .knote-code-input-status-full { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .knote-code-input-status-short { display: inline; }
+  .knote-code-console-actions { gap: .3rem; }
+}
+@media (pointer: coarse) {
+  .knote-code-search-row [data-balsa-control],
+  .knote-code-input-row [data-balsa="input"] input { font-size: 1rem; }
 }
 @media (max-width: 760px) {
   .knote-code-actions kbd,
@@ -321,6 +360,7 @@
   white-space: nowrap;
 }
 .knote-code-page-heading input.knote-title-field { margin: 0; font-size: clamp(1.3rem, 2vw, 1.7rem) !important; }
+.knote-code-page-heading input.knote-title-field:not(:focus) { text-overflow: ellipsis; }
 .knote-code-page-heading .knote-page-glyph { min-height: 2.5rem; }
 .knote-code-page-heading [id^="page-icon-"][id$="-trigger"] {
   width: 2.45rem !important;
@@ -342,4 +382,8 @@
   .knote-main:has(> .knote-canvas--code) .knote-topbar-left [data-balsa="breadcrumb"] ol > li:last-child::before { display: none; }
   .knote-main:has(> .knote-canvas--code) .knote-topbar-actions { margin-left: auto; }
   .knote-main:has(> .knote-canvas--code) > .knote-canvas--code { padding-top: .15rem; }
+}
+@media (max-width: 420px) {
+  .knote-main:has(> .knote-canvas--code) .knote-topbar-left { flex-basis: auto; }
+  .knote-main:has(> .knote-canvas--code) .knote-topbar-left [data-balsa="breadcrumb"] { display: none; }
 }
