@@ -355,7 +355,7 @@ function closeCloudImport(): void {
   if (cloudImportPreview.value) void chooseCloudImport('cloud');
 }
 watch(() => cloudWorkspace.conflicts.value.length, (count) => {
-  if (count > 0) conflictDialogOpen.value = true;
+  conflictDialogOpen.value = count > 0;
 });
 const {
   bannerFiles, bannerObjectUrls, saveState,
@@ -366,6 +366,9 @@ const {
   pages, todayTasks, preferences, databaseViewStates, snapshot: workspaceSnapshot, notify,
   enabled: persistenceEnabled, cloudActive: cloudWorkspace.active, persistCloud: cloudWorkspace.flush,
 });
+async function resolveCloudChoice(choice: 'cloud' | 'local' | 'both'): Promise<void> {
+  if (cloudConflict.value && await cloudWorkspace.resolveConflict(cloudConflict.value.id, choice)) persist();
+}
 const cloudSaveLabel = computed(() => {
   if (saveState.value === 'conflict' || cloudWorkspace.status.value === 'conflict') return 'Conflicto por resolver';
   if (saveState.value === 'error') return 'Error al guardar';
@@ -998,7 +1001,7 @@ onBeforeUnmount(() => {
       :conflict="cloudConflict"
       :total="cloudWorkspace.conflicts.value.length"
       :busy="cloudWorkspace.isResolving.value"
-      @choose="(choice) => cloudConflict && cloudWorkspace.resolveConflict(cloudConflict.id, choice)"
+      @choose="resolveCloudChoice"
     />
 
     <div class="knote-main" :class="{ 'knote-main--inspector': entryInspectorOpen && Boolean(detailEntry && detailPage) }">

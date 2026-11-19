@@ -135,8 +135,10 @@ export function putCloudState(state: Pick<CloudSnapshot, 'todayTasks' | 'prefere
   return requestJson('/api/workspace/state', { method: 'PUT', body: JSON.stringify({ state, revision }) });
 }
 
-export function resolveCloudConflict(id: string, choice: 'cloud' | 'local' | 'both'): Promise<CloudWorkspaceResponse> {
-  return requestJson(`/api/conflicts/${encodeURIComponent(id)}`, { method: 'POST', body: JSON.stringify({ choice }) });
+export function resolveCloudConflict(id: string, choice: 'cloud' | 'local' | 'both', localVersion?: unknown): Promise<CloudWorkspaceResponse> {
+  return requestJson(`/api/conflicts/${encodeURIComponent(id)}`, {
+    method: 'POST', body: JSON.stringify({ choice, localVersion }),
+  });
 }
 
 export function publishCloudPage(pageId: string): Promise<{ published: true; url: string }> {

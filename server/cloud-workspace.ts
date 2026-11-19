@@ -28,6 +28,10 @@ function validateState(value: unknown): value is WorkspaceStateInput {
     && ['comfortable', 'compact'].includes(String(preferences.density));
 }
 
+function stateFields({ todayTasks, preferences, databaseViewStates }: WorkspaceStateInput): WorkspaceStateInput {
+  return { todayTasks, preferences, databaseViewStates };
+}
+
 async function writeConflict(
   conflicts: Collection<ConflictDocument>,
   input: Omit<ConflictDocument, '_id' | 'createdAt' | 'resolvedAt'>,
@@ -199,33 +203,34 @@ export async function saveWorkspaceState(request: Request): Promise<Response> {
   const body = await readJson(request);
   if (isResponse(body)) return body;
   if (!isRecord(body) || !validateState(body.state) || !Number.isSafeInteger(body.revision) || Number(body.revision) < 0) return cloudError('El estado del espacio o su revisión no son válidos.', 400);
+  const submittedState = stateFields(body.state);
   const db = await getDatabase();
   const states = db.collection<WorkspaceState>('user_state');
   const current = await states.findOne({ owner: profile.subject });
   const expectedRevision = Number(body.revision);
   if ((current?.revision ?? 0) !== expectedRevision) {
-    if (current && sameJson({ todayTasks: current.todayTasks, preferences: current.preferences, databaseViewStates: current.databaseViewStates }, body.state)) {
+    if (current && sameJson(stateFields(current), submittedState)) {
       return cloudResponse({ revision: current.revision, unchanged: true });
     }
-    return stateConflictResponse(db.collection<ConflictDocument>('conflicts'), profile.subject, body.state, current);
+    return stateConflictResponse(db.collection<ConflictDocument>('conflicts'), profile.subject, submittedState, current);
   }
   const now = Date.now();
   try {
-    if (!current) await states.insertOne({ owner: profile.subject, ...body.state, revision: 1, updatedAt: now });
+    if (!current) await states.insertOne({ owner: profile.subject, ...submittedState, revision: 1, updatedAt: now });
     else {
-      const result = await states.updateOne({ owner: profile.subject, revision: expectedRevision }, { $set: { ...body.state, revision: expectedRevision + 1, updatedAt: now } });
+      const result = await states.updateOne({ owner: profile.subject, revision: expectedRevision }, { $set: { ...submittedState, revision: expectedRevision + 1, updatedAt: now } });
       if (result.matchedCount === 0) {
         const latest = await states.findOne({ owner: profile.subject });
-        if (latest && sameJson({ todayTasks: latest.todayTasks, preferences: latest.preferences, databaseViewStates: latest.databaseViewStates }, body.state)) return cloudResponse({ revision: latest.revision, unchanged: true });
-        return stateConflictResponse(db.collection<ConflictDocument>('conflicts'), profile.subject, body.state, latest);
+        if (latest && sameJson(stateFields(latest), submittedState)) return cloudResponse({ revision: latest.revision, unchanged: true });
+        return stateConflictResponse(db.collection<ConflictDocument>('conflicts'), profile.subject, submittedState, latest);
       }
     }
     return cloudResponse({ revision: current ? expectedRevision + 1 : 1 });
   } catch (error) {
     if ((error as { code?: number }).code !== 11000) throw error;
     const latest = await states.findOne({ owner: profile.subject });
-    if (latest && sameJson({ todayTasks: latest.todayTasks, preferences: latest.preferences, databaseViewStates: latest.databaseViewStates }, body.state)) return cloudResponse({ revision: latest.revision, unchanged: true });
-    return stateConflictResponse(db.collection<ConflictDocument>('conflicts'), profile.subject, body.state, latest);
+    if (latest && sameJson(stateFields(latest), submittedState)) return cloudResponse({ revision: latest.revision, unchanged: true });
+    return stateConflictResponse(db.collection<ConflictDocument>('conflicts'), profile.subject, submittedState, latest);
   }
 }
 
@@ -333,16 +338,25 @@ export async function resolveConflict(request: Request, conflictId: string): Pro
   const conflict = await conflicts.findOne({ _id: conflictId, owner: profile.subject, resolvedAt: null });
   if (!conflict) return cloudError('El conflicto ya no está disponible.', 404);
   const choice = body.choice as 'cloud' | 'local' | 'both';
+  let localVersion = conflict.localVersion;
+  if (choice !== 'cloud' && Object.hasOwn(body, 'localVersion')) {
+    const submitted = body.localVersion;
+    const valid = conflict.kind === 'page'
+      ? submitted === null || (safePage(submitted) && submitted.id === conflict.pageId)
+      : validateState(submitted);
+    if (!valid) return cloudError('La versión local no corresponde al conflicto.', 400);
+    localVersion = submitted;
+  }
 
   if (conflict.kind === 'page' && conflict.pageId) {
     const pages = db.collection<StoredPage>('pages');
     const current = await pages.findOne({ owner: profile.subject, pageId: conflict.pageId });
     if (choice === 'local' && (current?.revision ?? 0) !== conflict.cloudRevision
-      && !sameJson(current?.page ?? null, conflict.localVersion)) {
-      return pageConflictResponse(conflicts, profile.subject, conflict.pageId, conflict.localVersion, current);
+      && !sameJson(current?.page ?? null, localVersion)) {
+      return pageConflictResponse(conflicts, profile.subject, conflict.pageId, localVersion, current);
     }
     if (choice !== 'cloud') {
-      const localPage = conflict.localVersion;
+      const localPage = localVersion;
       if (localPage === null && choice === 'local') {
         if (current) {
           const deleted = await pages.deleteOne({ owner: profile.subject, pageId: conflict.pageId, revision: current.revision });
@@ -382,7 +396,7 @@ export async function resolveConflict(request: Request, conflictId: string): Pro
     const states = db.collection<WorkspaceState>('user_state');
     const stored = await states.findOne({ owner: profile.subject });
     const current = stored ?? defaultState(profile.subject);
-    const local = validateState(conflict.localVersion) ? conflict.localVersion : null;
+    const local = validateState(localVersion) ? stateFields(localVersion) : null;
     if (local) {
       const currentData = { todayTasks: current.todayTasks, preferences: current.preferences, databaseViewStates: current.databaseViewStates };
       if (choice === 'local' && current.revision !== conflict.cloudRevision && !sameJson(currentData, local)) {

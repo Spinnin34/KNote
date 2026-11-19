@@ -42,6 +42,62 @@ function pageMap(snapshot: CloudSnapshot): Map<string, WorkspacePage> {
   return new Map((snapshot.pages as WorkspacePage[]).map((page) => [page.id, page]));
 }
 
+function workspaceFields({ todayTasks, preferences, databaseViewStates }: CloudSnapshot) {
+  return { todayTasks, preferences, databaseViewStates };
+}
+
+function preservePendingChanges(
+  previous: CloudLocalState, submitted: CloudSnapshot, local: CloudSnapshot,
+  response: CloudWorkspaceResponse, resolved: CloudConflict,
+): CloudLocalState {
+  const remote = response.snapshot;
+  const previousBase = previous.baseSnapshot ?? remote;
+  const basePages = pageMap(previousBase);
+  const localPages = pageMap(local);
+  const resolvedPageId = resolved.kind === 'page' ? resolved.pageId : null;
+  const submittedPage = resolvedPageId ? pageMap(submitted).get(resolvedPageId) : undefined;
+  const remotePages = pageMap(remote);
+  const snapshotPages = new Map(remotePages);
+  const comparisonPages = new Map(remotePages);
+  const revisions = { ...response.revisions };
+  let pendingPages = false;
+
+  const pageIds = new Set([...basePages.keys(), ...localPages.keys()]);
+  if (resolvedPageId) pageIds.add(resolvedPageId);
+  for (const id of pageIds) {
+    // The choice applies to the version at submission. An edit made afterwards is still pending.
+    const basePage = id === resolvedPageId ? submittedPage : basePages.get(id);
+    const localPage = localPages.get(id);
+    if (JSON.stringify(localPage) === JSON.stringify(basePage)
+      || JSON.stringify(localPage) === JSON.stringify(remotePages.get(id))) continue;
+
+    pendingPages = true;
+    if (localPage) snapshotPages.set(id, localPage);
+    else snapshotPages.delete(id);
+    // Keep the revision the edit was made against. A remote edit must still produce a conflict.
+    if (basePage) comparisonPages.set(id, basePage);
+    else comparisonPages.delete(id);
+    if (previous.revisions[id] !== undefined) revisions[id] = previous.revisions[id];
+    else delete revisions[id];
+  }
+
+  const localFields = workspaceFields(local);
+  const remoteFields = workspaceFields(remote);
+  const baseFields = workspaceFields(resolved.kind === 'state' ? submitted : previousBase);
+  const pendingState = JSON.stringify(localFields) !== JSON.stringify(baseFields)
+    && JSON.stringify(localFields) !== JSON.stringify(remoteFields);
+
+  return {
+    ...previous,
+    snapshot: { pages: [...snapshotPages.values()], ...(pendingState ? localFields : remoteFields) },
+    baseSnapshot: { pages: [...comparisonPages.values()], ...(pendingState ? baseFields : remoteFields) },
+    revisions,
+    stateRevision: pendingState ? previous.stateRevision : response.stateRevision,
+    pending: pendingPages || pendingState || response.conflicts.length > 0,
+    updatedAt: Date.now(),
+  };
+}
+
 function cloudHasData(snapshot: CloudSnapshot): boolean {
   return snapshot.pages.length > 0 || snapshot.todayTasks.length > 0;
 }
@@ -78,6 +134,12 @@ export function useCloudWorkspace(options: CloudWorkspaceOptions) {
   let workspaceGeneration = 0;
   let blockedPages = new Set<string>();
   let stateBlocked = false;
+
+  function updateConflicts(items: CloudConflict[]): void {
+    conflicts.value = items;
+    blockedPages = new Set(items.flatMap((item) => item.kind === 'page' && item.pageId ? [item.pageId] : []));
+    stateBlocked = items.some((item) => item.kind === 'state');
+  }
 
   function currentSnapshot(): CloudSnapshot {
     return {
@@ -139,9 +201,7 @@ export function useCloudWorkspace(options: CloudWorkspaceOptions) {
             ...state, baseSnapshot: cloneSnapshot(initial.snapshot),
             revisions: initial.revisions, stateRevision: initial.stateRevision, pending: true,
           };
-          conflicts.value = initial.conflicts;
-          blockedPages = new Set(initial.conflicts.filter((item) => item.kind === 'page' && item.pageId).map((item) => item.pageId!));
-          stateBlocked = initial.conflicts.some((item) => item.kind === 'state');
+          updateConflicts(initial.conflicts);
         }
 
         const base = state.baseSnapshot;
@@ -182,17 +242,9 @@ export function useCloudWorkspace(options: CloudWorkspaceOptions) {
           }
         }
 
-        const previousState = {
-          todayTasks: base.todayTasks,
-          preferences: base.preferences,
-          databaseViewStates: base.databaseViewStates,
-        };
+        const previousState = workspaceFields(base);
         if (generation !== workspaceGeneration) return 'pending';
-        const nextState = {
-          todayTasks: snapshot.todayTasks,
-          preferences: snapshot.preferences,
-          databaseViewStates: snapshot.databaseViewStates,
-        };
+        const nextState = workspaceFields(snapshot);
         if (!stateBlocked && JSON.stringify(previousState) !== JSON.stringify(nextState)) {
           try {
             const result = await putCloudState(nextState, state.stateRevision);
@@ -218,15 +270,12 @@ export function useCloudWorkspace(options: CloudWorkspaceOptions) {
         if (hadConflict) {
           const remote = await fetchCloudWorkspace();
           if (generation !== workspaceGeneration) return 'pending';
-          conflicts.value = remote.conflicts;
-          blockedPages = new Set(remote.conflicts.filter((item) => item.kind === 'page' && item.pageId).map((item) => item.pageId!));
-          stateBlocked = remote.conflicts.some((item) => item.kind === 'state');
-          state.baseSnapshot = cloneSnapshot(remote.snapshot);
-          state.revisions = remote.revisions;
-          state.stateRevision = remote.stateRevision;
-          status.value = 'conflict';
+          // Refresh the work list without rebasing unacknowledged local edits onto unrelated remote changes.
+          updateConflicts(remote.conflicts);
+          const stillBlocked = blockedPages.size > 0 || stateBlocked;
+          status.value = stillBlocked ? 'conflict' : 'pending';
           await saveStateLocally(true);
-          return 'conflict';
+          return stillBlocked ? 'conflict' : 'retry';
         }
         const pending = JSON.stringify(currentSnapshot()) !== serializedSnapshot;
         status.value = pending ? 'syncing' : 'synced';
@@ -257,9 +306,7 @@ export function useCloudWorkspace(options: CloudWorkspaceOptions) {
     workspaceGeneration += 1;
     owner.value = accountOwner;
     active.value = true;
-    conflicts.value = response.conflicts;
-    blockedPages = new Set(response.conflicts.filter((item) => item.kind === 'page' && item.pageId).map((item) => item.pageId!));
-    stateBlocked = response.conflicts.some((item) => item.kind === 'state');
+    updateConflicts(response.conflicts);
     const current = pending && state ? cloneSnapshot(state.snapshot) : cloneSnapshot(response.snapshot);
     state = {
       owner: accountOwner,
@@ -375,26 +422,70 @@ export function useCloudWorkspace(options: CloudWorkspaceOptions) {
     owner.value = null;
     active.value = false;
     state = null;
-    conflicts.value = [];
+    updateConflicts([]);
     importPreview.value = null;
     pendingImport = null;
-    blockedPages.clear();
-    stateBlocked = false;
     applySnapshot(snapshot);
     ready.value = true;
     status.value = 'local';
   }
 
-  async function resolveConflict(id: string, choice: 'cloud' | 'local' | 'both'): Promise<void> {
-    if (isResolving.value) return;
+  async function resolveConflict(id: string, choice: 'cloud' | 'local' | 'both'): Promise<boolean> {
+    if (isResolving.value || !active.value || !owner.value) return false;
+    const generation = workspaceGeneration;
     isResolving.value = true;
+
+    const resolution = syncQueue.catch(() => undefined).then(async () => {
+      const conflict = conflicts.value.find((item) => item.id === id);
+      if (!conflict || !state || generation !== workspaceGeneration) return false;
+      await saveStateLocally(true);
+      if (generation !== workspaceGeneration || !state) return false;
+      const previous = state;
+      const local = cloneSnapshot(currentSnapshot());
+      let localVersion: unknown;
+      if (choice !== 'cloud' && previous.baseSnapshot) {
+        if (conflict.kind === 'page' && conflict.pageId) {
+          const currentPage = pageMap(local).get(conflict.pageId);
+          const basePage = pageMap(previous.baseSnapshot).get(conflict.pageId);
+          if (JSON.stringify(currentPage) !== JSON.stringify(basePage)) {
+            if (currentPage) await ensureAssets({ ...local, pages: [currentPage] });
+            localVersion = currentPage ?? null;
+          }
+        } else if (conflict.kind === 'state') {
+          const currentFields = workspaceFields(local);
+          if (JSON.stringify(currentFields) !== JSON.stringify(workspaceFields(previous.baseSnapshot))) {
+            localVersion = currentFields;
+          }
+        }
+      }
+      if (generation !== workspaceGeneration) return false;
+      const response = await resolveCloudConflict(id, choice, localVersion);
+      if (generation !== workspaceGeneration) return false;
+
+      const next = preservePendingChanges(previous, local, cloneSnapshot(currentSnapshot()), response, conflict);
+      const resolvedGeneration = ++workspaceGeneration;
+      state = next;
+      updateConflicts(response.conflicts);
+      applySnapshot(cloneSnapshot(next.snapshot));
+      status.value = response.conflicts.length ? 'conflict' : next.pending ? 'pending' : 'synced';
+      await writeCloudLocalState(next).catch(() => {
+        if (resolvedGeneration === workspaceGeneration) {
+          notify('No se guardó la copia local', 'Mantén abierta esta pestaña y reintenta el guardado.', 'warning');
+        }
+      });
+      if (resolvedGeneration !== workspaceGeneration) return false;
+      notify('Conflicto resuelto', choice === 'both' ? 'Se conservaron las dos versiones.' : 'Se aplicó la versión elegida.');
+      return true;
+    });
+    syncQueue = resolution.then(() => undefined, () => undefined);
+
     try {
-      const response = await resolveCloudConflict(id, choice);
-      const lastGuestSnapshot = state?.lastGuestSnapshot ?? null;
-      acceptResponse(response, owner.value!, lastGuestSnapshot);
-      notify('Conflicto resuelto', choice === 'both' ? 'Se conservaron las dos versiones.' : 'Se actualizó la versión sincronizada.');
+      return await resolution;
     } catch (error) {
-      notify('No se pudo resolver el conflicto', error instanceof Error ? error.message : 'Inténtalo de nuevo.', 'destructive');
+      if (generation === workspaceGeneration) {
+        notify('No se pudo resolver el conflicto', error instanceof Error ? error.message : 'Inténtalo de nuevo.', 'destructive');
+      }
+      return false;
     } finally { isResolving.value = false; }
   }
 
