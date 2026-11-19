@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
-import { ArrowLeft } from '@lucide/vue';
+import { ArrowLeft, RotateCw } from '@lucide/vue';
 import Button from '@/components/ui/Button.vue';
 import { initialHtml } from '@/components/block-editor/content';
 
@@ -9,9 +9,10 @@ const token = window.location.pathname.split('/').filter(Boolean)[1] ?? '';
 const documentData = ref<PublicDocument | null>(null);
 const html = ref('');
 const loading = ref(true);
-const error = ref('');
+const failure = ref<'missing' | 'unavailable' | null>(null);
 const pageTitle = computed(() => documentData.value?.title?.trim() || 'Documento');
 let originalTitle = '';
+let pendingRequest: AbortController | undefined;
 
 function renderSafeContent(content: string): string {
   const template = document.createElement('template');
@@ -63,18 +64,31 @@ function renderSafeContent(content: string): string {
 }
 
 async function load(): Promise<void> {
+  if (pendingRequest) return;
+  const request = new AbortController();
+  pendingRequest = request;
   loading.value = true;
-  error.value = '';
+  failure.value = null;
   try {
-    const response = await fetch(`/api/public/${encodeURIComponent(token)}`, { cache: 'no-store', credentials: 'omit' });
-    if (!response.ok) throw new Error(response.status === 404 ? 'Este documento no está disponible.' : 'No se pudo cargar el documento.');
+    const response = await fetch(`/api/public/${encodeURIComponent(token)}`, {
+      cache: 'no-store', credentials: 'omit', signal: request.signal,
+    });
+    if (request.signal.aborted) return;
+    if (!response.ok) {
+      failure.value = response.status === 404 ? 'missing' : 'unavailable';
+      return;
+    }
     const data = await response.json() as PublicDocument;
+    if (request.signal.aborted) return;
     documentData.value = data;
     html.value = renderSafeContent(data.content || '');
     document.title = `${data.title || 'Documento'} · KNote`;
-  } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : 'No se pudo cargar el documento.';
-  } finally { loading.value = false; }
+  } catch {
+    if (!request.signal.aborted) failure.value = 'unavailable';
+  } finally {
+    pendingRequest = undefined;
+    loading.value = false;
+  }
 }
 
 function openWorkspace(): void { window.location.assign('/'); }
@@ -86,7 +100,10 @@ onMounted(() => {
   robots.content = 'noindex, nofollow, noarchive';
   void load();
 });
-onBeforeUnmount(() => { if (originalTitle) document.title = originalTitle; });
+onBeforeUnmount(() => {
+  pendingRequest?.abort();
+  document.title = originalTitle;
+});
 </script>
 
 <template>
@@ -99,10 +116,13 @@ onBeforeUnmount(() => { if (originalTitle) document.title = originalTitle; });
     </header>
 
     <div v-if="loading" class="knote-public-message" role="status">Cargando documento…</div>
-    <section v-else-if="error" class="knote-public-message knote-public-message--error" role="alert">
-      <h1>Documento no disponible</h1>
-      <p>{{ error }}</p>
-      <Button variant="soft" color="neutral" size="sm" :prefix-icon="ArrowLeft" @click="openWorkspace">Abrir KNote</Button>
+    <section v-else-if="failure" class="knote-public-message knote-public-message--error" role="alert">
+      <h1>{{ failure === 'missing' ? 'Documento no disponible' : 'No se pudo cargar el documento' }}</h1>
+      <p>{{ failure === 'missing'
+        ? 'El enlace puede haber caducado o el documento puede haber vuelto a ser privado.'
+        : 'La conexión con KNote falló. Puedes volver a intentar abrir este enlace.' }}</p>
+      <Button v-if="failure === 'unavailable'" variant="solid" color="primary" size="sm" :prefix-icon="RotateCw" @click="load">Reintentar</Button>
+      <Button v-else variant="soft" color="neutral" size="sm" :prefix-icon="ArrowLeft" @click="openWorkspace">Abrir KNote</Button>
     </section>
     <article v-else-if="documentData" class="knote-public-document">
       <img v-if="documentData.banner?.startsWith('knote-asset:')" class="knote-public-banner" :src="`/api/public/${encodeURIComponent(token)}/assets/${encodeURIComponent(documentData.banner.slice('knote-asset:'.length))}`" alt="" />
