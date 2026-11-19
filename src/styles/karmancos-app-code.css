@@ -57,10 +57,10 @@
 .knote-code-panels[data-orientation="vertical"]:not(.knote-code-panels--editor-only) {
   min-height: max(23rem, calc(var(--knote-code-editor-min) + var(--knote-code-console-min) + .875rem));
 }
-.knote-code-panels--search { --knote-code-editor-min: 15.5rem; }
-.knote-code-panels--replace { --knote-code-editor-min: 18rem; }
+.knote-code-panels--search { --knote-code-editor-min: 16.5rem; }
+.knote-code-panels--replace { --knote-code-editor-min: 19rem; }
 .knote-code-panels--problems { --knote-code-editor-min: 16.5rem; }
-.knote-code-panels--input { --knote-code-console-min: 10.75rem; }
+.knote-code-panels--input { --knote-code-console-min: 12rem; }
 .knote-code-panels > [data-balsa="resizable-panel"] { min-height: 0; overflow: hidden; }
 .knote-code-panels > [data-balsa="resizable-handle"] {
   background: var(--knote-code-raised-surface);
