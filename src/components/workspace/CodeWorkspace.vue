@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { acceptCompletion, autocompletion, type Completion, type CompletionContext, type CompletionResult } from '@codemirror/autocomplete';
-import { indentMore } from '@codemirror/commands';
+import { indentLess, indentMore, moveLineDown, moveLineUp } from '@codemirror/commands';
 import { globalCompletion as pythonGlobalCompletion, localCompletionSource as pythonLocalCompletion, python, pythonLanguage } from '@codemirror/lang-python';
 import { linter, setDiagnostics, type Diagnostic } from '@codemirror/lint';
 import { findNext, findPrevious, replaceAll as replaceAllMatches, replaceNext as replaceNextMatch, search, SearchQuery, setSearchQuery } from '@codemirror/search';
@@ -9,16 +9,18 @@ import { basicSetup } from 'codemirror';
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
 import { EditorView, hoverTooltip, keymap, type Tooltip } from '@codemirror/view';
-import { AlertCircle, BookOpen, Check, CircleHelp, Code2, Download, LoaderCircle, Play, Search, Square, Terminal, Trash2, Upload } from '@lucide/vue';
+import { AlertCircle, ArrowDown, ArrowUp, BookOpen, Check, Code2, Download, LayoutPanelTop, LoaderCircle, MoreHorizontal, PanelBottom, PanelRight, Play, Search, Square, Terminal, Trash2, Upload } from '@lucide/vue';
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import Attachment, { type AttachmentRejection } from '@/components/ui/Attachment.vue';
 import Badge from '@/components/ui/Badge.vue';
 import Button from '@/components/ui/Button.vue';
+import DropdownMenu from '@/components/ui/DropdownMenu.vue';
 import Icon from '@/components/ui/Icon.vue';
 import Input from '@/components/ui/Input.vue';
 import Modal from '@/components/ui/Modal.vue';
 import Resizable from '@/components/ui/Resizable.vue';
-import { getPythonRuntimeConnection, nextPythonMessageId, type PythonRuntimeMessage } from '@/lib/python-runtime-client';
+import type { MenuItem, MenuSelection } from '@/components/ui/menu';
+import { getPythonRuntimeConnection, nextPythonMessageId, type PythonRuntimeConnection, type PythonRuntimeMessage } from '@/lib/python-runtime-client';
 import { countSearchMatches } from '@/components/workspace/code-search';
 
 type AnalysisMode = 'complete' | 'signature' | 'hover' | 'syntax' | 'lint' | 'types';
@@ -39,26 +41,31 @@ type DiagnosticResult = {
 type ConsoleLine = { id: number; kind: 'output' | 'error' | 'system' | 'input'; text: string };
 type CodeDiagnostic = Diagnostic & { line: number; source: 'syntax' | 'lint' | 'types' };
 
-const model = defineModel<string>({ required: true });
 const PythonGuideDrawer = defineAsyncComponent(() => import('@/components/workspace/PythonGuideDrawer.vue'));
-const props = defineProps<{ pageId: string; pageTitle?: string }>();
+const props = defineProps<{ pageId: string; pageTitle?: string; code: string }>();
+const emit = defineEmits<{ 'update-code': [pageId: string, code: string] }>();
 const runShortcut = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘↵' : 'Ctrl+↵';
 
 const editorHost = shallowRef<HTMLElement | null>(null);
 const consoleScroll = shallowRef<HTMLElement | null>(null);
+const consoleInput = shallowRef<HTMLFormElement | null>(null);
 const editor = shallowRef<EditorView | null>(null);
-const worker = shallowRef<Worker | null>(null);
+let runtime: PythonRuntimeConnection | null = null;
+const runId = ref<number | null>(null);
+const running = computed(() => runId.value !== null);
+const stopping = ref(false);
 const runtimeState = ref<'starting' | 'runtime' | 'analysis' | 'ready' | 'error'>('starting');
 const runtimeError = ref('');
 const jediReady = ref(false);
-const running = ref(false);
 const waitingForInput = ref(false);
+const inputSessionStarted = ref(false);
 const inputValue = ref('');
 const currentLine = ref(1);
 const currentColumn = ref(1);
 const lineCount = ref(1);
 const characterCount = ref(0);
 const diagnostics = ref<CodeDiagnostic[]>([]);
+const problemsOpen = ref(false);
 const errorDiagnostics = computed(() => diagnostics.value.filter((diagnostic) => diagnostic.severity === 'error'));
 const warningCount = computed(() => diagnostics.value.filter((diagnostic) => diagnostic.severity === 'warning').length);
 const visibleDiagnostics = computed(() => diagnostics.value.slice(0, 5));
@@ -85,7 +92,35 @@ const searchResultLabel = computed(() => !searchText.value
 const executionError = ref('');
 const executionErrorLine = ref<number | null>(null);
 const consoleLines = ref<ConsoleLine[]>([]);
-const panelSize = ref(68);
+type ConsolePosition = 'bottom' | 'right' | 'hidden';
+const layoutKey = 'knote.python.layout';
+const wideLayout = window.matchMedia('(min-width: 58rem)');
+const canDockRight = ref(wideLayout.matches);
+const consolePosition = ref<ConsolePosition>('bottom');
+const bottomSize = ref(76);
+const rightSize = ref(70);
+const consoleDockedRight = computed(() => consolePosition.value === 'right' && canDockRight.value);
+const consoleVisible = computed(() => consolePosition.value !== 'hidden');
+const panelSize = computed({
+  get: () => consoleDockedRight.value ? rightSize.value : bottomSize.value,
+  set: (size: number) => { (consoleDockedRight.value ? rightSize : bottomSize).value = Math.round(size); },
+});
+const stackedPanelStyle = computed(() => consoleDockedRight.value || !consoleVisible.value ? undefined : {
+  gridTemplateRows: `minmax(0, ${panelSize.value}fr) auto minmax(6.5rem, ${100 - panelSize.value}fr)`,
+});
+const layoutItems = computed<readonly MenuItem[]>(() => [
+  { id: 'bottom', type: 'radio', group: 'console', label: 'Consola abajo', icon: PanelBottom, checked: consoleVisible.value && !consoleDockedRight.value },
+  { id: 'right', type: 'radio', group: 'console', label: 'Consola a la derecha', icon: PanelRight, checked: consoleDockedRight.value, disabled: !canDockRight.value },
+  { id: 'hidden', type: 'radio', group: 'console', label: 'Solo editor', icon: LayoutPanelTop, checked: !consoleVisible.value, disabled: waitingForInput.value },
+]);
+const scriptItems = computed<readonly MenuItem[]>(() => [
+  { id: 'import', label: 'Abrir archivo .py', icon: Upload, disabled: running.value },
+  { id: 'export', label: 'Descargar archivo .py', icon: Download },
+  { id: 'files-end', type: 'separator' },
+  { id: 'move-up', label: 'Mover selección arriba', icon: ArrowUp, shortcut: 'Alt+↑' },
+  { id: 'move-down', label: 'Mover selección abajo', icon: ArrowDown, shortcut: 'Alt+↓' },
+  { id: 'guide', label: 'Guía de Python', icon: BookOpen },
+]);
 const exportModalOpen = ref(false);
 const importModalOpen = ref(false);
 const pythonGuideOpen = ref(false);
@@ -96,9 +131,7 @@ const importing = ref(false);
 const importFiles = ref<readonly File[]>([]);
 const importedFileName = ref('');
 const activeFileName = computed(() => importedFileName.value || `${suggestFileStem(props.pageTitle || 'main')}.py`);
-let inputControl: Int32Array | null = null;
-let inputData: Uint8Array | null = null;
-let interruptView: Int32Array | null = null;
+let layoutSaveTimer: number | undefined;
 const pendingRequests = new Map<number, (result: DiagnosticResult | null) => void>();
 let consoleLineId = 0;
 let diagnosticsTimer: number | undefined;
@@ -210,7 +243,6 @@ function navigateSearch(direction: 1 | -1): void {
   updateSearchQuery();
   (direction > 0 ? findNext : findPrevious)(view);
   refreshSearchMatches();
-  view.focus();
 }
 
 function replaceSearchMatch(all = false): void {
@@ -219,66 +251,109 @@ function replaceSearchMatch(all = false): void {
   updateSearchQuery();
   (all ? replaceAllMatches : replaceNextMatch)(view);
   refreshSearchMatches();
-  view.focus();
 }
 
 function handleSearchKeydown(event: KeyboardEvent): void {
   if (event.key === 'Escape') {
     event.preventDefault();
     closeFind();
-  } else if (event.key === 'Enter') {
+  } else if (event.key === 'Enter' && event.target instanceof HTMLInputElement && !event.isComposing) {
     event.preventDefault();
-    navigateSearch(event.shiftKey ? -1 : 1);
+    if (event.target.id === `python-replace-${props.pageId}`) replaceSearchMatch();
+    else navigateSearch(event.shiftKey ? -1 : 1);
   }
 }
 
+function changeLayout({ id }: MenuSelection): void {
+  if (id === 'bottom' || id === 'right' || id === 'hidden') consolePosition.value = id;
+}
+
+function handleScriptAction({ id }: MenuSelection): void {
+  if (id === 'import') openImportDialog();
+  else if (id === 'export') openExportDialog();
+  else if (id === 'guide') pythonGuideOpen.value = true;
+  else if (editor.value && (id === 'move-up' || id === 'move-down')) {
+    (id === 'move-up' ? moveLineUp : moveLineDown)(editor.value);
+    requestAnimationFrame(() => editor.value?.focus());
+  }
+}
+
+function updateDockAvailability(event: MediaQueryListEvent): void {
+  canDockRight.value = event.matches;
+}
+
+function restoreLayout(): void {
+  try {
+    const saved = JSON.parse(localStorage.getItem(layoutKey) ?? 'null');
+    if (saved?.position === 'bottom' || saved?.position === 'right' || saved?.position === 'hidden') consolePosition.value = saved.position;
+    if (Number.isFinite(saved?.bottom)) bottomSize.value = Math.min(82, Math.max(42, saved.bottom));
+    if (Number.isFinite(saved?.right)) rightSize.value = Math.min(78, Math.max(44, saved.right));
+  } catch {
+    // The default layout remains usable when storage is unavailable.
+  }
+}
+
+function saveLayout(): void {
+  window.clearTimeout(layoutSaveTimer);
+  layoutSaveTimer = undefined;
+  try {
+    localStorage.setItem(layoutKey, JSON.stringify({ position: consolePosition.value, bottom: bottomSize.value, right: rightSize.value }));
+  } catch {
+    // Layout changes still work for this session.
+  }
+}
+
+function revealConsole(): void {
+  if (!consoleVisible.value) consolePosition.value = 'bottom';
+}
+
 function runScript(): boolean {
-  if (!worker.value || runtimeState.value !== 'ready' || running.value) return false;
-  const code = editor.value?.state.doc.toString() ?? model.value;
-  if (modelSyncTimer !== undefined) window.clearTimeout(modelSyncTimer);
-  modelSyncTimer = undefined;
-  if (model.value !== code) model.value = code;
+  if (!runtime || runtimeState.value !== 'ready' || running.value) return false;
+  const code = editor.value?.state.doc.toString() ?? props.code;
+  flushCode();
+  const id = runtime.run(code);
+  if (id === null) {
+    revealConsole();
+    appendConsole('system', 'La ejecución anterior todavía se está deteniendo. Vuelve a intentarlo en un momento.');
+    return true;
+  }
   consoleLines.value = [];
   executionError.value = '';
   executionErrorLine.value = null;
-  waitingForInput.value = false;
-  if (!inputControl || !interruptView) return false;
-  Atomics.store(inputControl, 0, 0);
-  Atomics.store(inputControl, 1, 0);
-  Atomics.store(inputControl, 2, 0);
-  Atomics.store(interruptView, 0, 0);
-  running.value = true;
+  runId.value = id;
+  window.clearTimeout(diagnosticsTimer);
+  window.clearTimeout(signatureTimer);
+  signatureSequence += 1;
+  signatureHelp.value = '';
+  diagnosticsPending.value = false;
+  for (const resolve of pendingRequests.values()) resolve(null);
+  pendingRequests.clear();
   appendConsole('system', `▶ Ejecutando ${activeFileName.value}`);
-  worker.value.postMessage({ type: 'run', id: nextPythonMessageId(), code });
   return true;
 }
 
 function stopScript(): void {
-  if (!running.value) return;
-  if (interruptView) Atomics.store(interruptView, 0, 2);
-  if (inputControl) {
-    Atomics.store(inputControl, 2, 1);
-    Atomics.store(inputControl, 0, 3);
-    Atomics.notify(inputControl, 0);
-  }
+  if (runId.value === null || !runtime?.stop(runId.value)) return;
+  stopping.value = true;
   waitingForInput.value = false;
+  inputSessionStarted.value = false;
   appendConsole('system', 'Deteniendo ejecución…');
 }
 
+function focusConsoleInput(): void {
+  consoleInput.value?.querySelector('input')?.focus();
+}
+
 function submitInput(): void {
-  if (!waitingForInput.value || !inputData || !inputControl) return;
-  const bytes = new TextEncoder().encode(inputValue.value + '\n');
-  if (bytes.length > inputData.length) {
-    appendConsole('error', 'La entrada es demasiado larga (máximo 64 KB).');
-    return;
+  if (!waitingForInput.value || runId.value === null) return;
+  const result = runtime?.submitInput(runId.value, inputValue.value);
+  if (result === 'too-long') appendConsole('error', 'La entrada es demasiado larga (máximo 64 KB).');
+  if (result === 'sent') {
+    appendConsole('input', `› ${inputValue.value}`);
+    inputValue.value = '';
+    waitingForInput.value = false;
   }
-  inputData.set(bytes);
-  Atomics.store(inputControl, 1, bytes.length);
-  Atomics.store(inputControl, 0, 1);
-  Atomics.notify(inputControl, 0);
-  appendConsole('input', `› ${inputValue.value}`);
-  inputValue.value = '';
-  waitingForInput.value = false;
+  focusConsoleInput();
 }
 
 function clearConsole(): void {
@@ -330,7 +405,7 @@ function downloadScript(close: () => void): void {
     exportError.value = 'Escribe un nombre válido sin barras ni caracteres especiales. La extensión .py se añade automáticamente.';
     return;
   }
-  const blobUrl = URL.createObjectURL(new Blob([model.value], { type: 'text/x-python;charset=utf-8' }));
+  const blobUrl = URL.createObjectURL(new Blob([editor.value?.state.doc.toString() ?? props.code], { type: 'text/x-python;charset=utf-8' }));
   const anchor = document.createElement('a');
   anchor.href = blobUrl;
   anchor.download = filename;
@@ -359,7 +434,10 @@ async function importScript(close: () => void): Promise<void> {
   importing.value = true;
   try {
     const content = (await file.text()).replace(/^\uFEFF/, '');
-    model.value = content;
+    if (disposed) return;
+    const view = editor.value;
+    if (view) view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: content }, scrollIntoView: true });
+    flushCode();
     importedFileName.value = file.name;
     executionError.value = '';
     executionErrorLine.value = null;
@@ -443,8 +521,7 @@ function focusDiagnostic(item: CodeDiagnostic): void {
 
 function executionLine(trace: string): number | null {
   const frames = [...trace.matchAll(/File ["']([^"']+)["'], line (\d+)/g)];
-  const userFrame = [...frames].reverse().find((frame) => /main\.py|<exec>|<string>/i.test(frame[1] ?? ''));
-  const frame = userFrame ?? frames.at(-1);
+  const frame = frames.reverse().find((item) => item[1] === 'main.py');
   const line = Number(frame?.[2]);
   return Number.isInteger(line) && line > 0 ? line : null;
 }
@@ -455,7 +532,7 @@ function executionSummary(trace: string): string {
 }
 
 function requestAnalysis(mode: AnalysisMode, code: string, line: number, column: number, timeout = 18_000): Promise<DiagnosticResult | null> {
-  if (!worker.value || runtimeState.value !== 'ready') return Promise.resolve(null);
+  if (!runtime || runtimeState.value !== 'ready' || running.value) return Promise.resolve(null);
   const id = nextPythonMessageId();
   return new Promise((resolve) => {
     const timer = window.setTimeout(() => {
@@ -467,7 +544,7 @@ function requestAnalysis(mode: AnalysisMode, code: string, line: number, column:
       window.clearTimeout(timer);
       resolve(result);
     });
-    worker.value?.postMessage({ type: 'analyze', id, code, line, column, mode });
+    runtime?.worker.postMessage({ type: 'analyze', id, code, line, column, mode });
   });
 }
 
@@ -622,7 +699,7 @@ function applyDiagnostics(result: DiagnosticResult | null, source: CodeDiagnosti
 async function analyzeTypes(code: string, line: number, column: number, syntaxValidated = false): Promise<void> {
   if (!syntaxValidated) {
     const syntax = await requestAnalysis('syntax', code, line, column, 5_000);
-    if (disposed || editor.value?.state.doc.toString() !== code) return;
+    if (disposed || running.value || editor.value?.state.doc.toString() !== code) return;
     if (!syntax || syntax.error || syntax.syntax?.length) {
       applyDiagnostics(syntax, 'syntax');
       diagnosticsPending.value = false;
@@ -630,7 +707,7 @@ async function analyzeTypes(code: string, line: number, column: number, syntaxVa
     }
   }
   const result = await requestAnalysis('types', code, line, column, 25_000);
-  if (!disposed && editor.value?.state.doc.toString() === code) {
+  if (!disposed && !running.value && editor.value?.state.doc.toString() === code) {
     applyDiagnostics(result, 'types');
     diagnosticsPending.value = false;
   }
@@ -638,7 +715,7 @@ async function analyzeTypes(code: string, line: number, column: number, syntaxVa
 
 function runTypeAnalysis(): void {
   const view = editor.value;
-  if (!view || runtimeState.value !== 'ready' || diagnosticsPending.value) return;
+  if (!view || runtimeState.value !== 'ready' || diagnosticsPending.value || running.value) return;
   const code = view.state.doc.toString();
   const cursor = positionAt(view, view.state.selection.main.head);
   diagnosticsPending.value = true;
@@ -648,7 +725,7 @@ function runTypeAnalysis(): void {
 
 function scheduleDiagnostics(): void {
   if (diagnosticsTimer !== undefined) window.clearTimeout(diagnosticsTimer);
-  if (!editor.value || runtimeState.value !== 'ready') return;
+  if (!editor.value || runtimeState.value !== 'ready' || running.value) return;
   diagnosticsPending.value = true;
   diagnosticsNotice.value = '';
   typeAnalysisComplete.value = false;
@@ -658,7 +735,7 @@ function scheduleDiagnostics(): void {
     const code = view.state.doc.toString();
     const cursor = positionAt(view, view.state.selection.main.head);
     const syntax = await requestAnalysis('syntax', code, cursor.line, cursor.column, 5_000);
-    if (disposed || editor.value?.state.doc.toString() !== code) return;
+    if (disposed || running.value || editor.value?.state.doc.toString() !== code) return;
     if (!syntax || syntax.error || syntax.syntax?.length) {
       applyDiagnostics(syntax, 'syntax');
       diagnosticsPending.value = false;
@@ -667,7 +744,7 @@ function scheduleDiagnostics(): void {
 
     applyDiagnostics({ syntax: [] }, 'syntax');
     const lint = await requestAnalysis('lint', code, cursor.line, cursor.column, 8_000);
-    if (disposed || editor.value?.state.doc.toString() !== code) return;
+    if (disposed || running.value || editor.value?.state.doc.toString() !== code) return;
     applyDiagnostics(lint, 'lint');
     if (!lint || lint.pyflakesError) {
       diagnosticsPending.value = false;
@@ -682,7 +759,7 @@ function scheduleDiagnostics(): void {
 function scheduleSignature(): void {
   const sequence = ++signatureSequence;
   if (signatureTimer !== undefined) window.clearTimeout(signatureTimer);
-  if (!editor.value || runtimeState.value !== 'ready') {
+  if (!editor.value || runtimeState.value !== 'ready' || running.value) {
     signatureHelp.value = '';
     return;
   }
@@ -714,35 +791,54 @@ function handleWorkerMessage(message: PythonRuntimeMessage): void {
     scheduleSignature();
   } else if (message.type === 'analysis-warning') {
     appendConsole('system', message.message ?? 'Un analizador no pudo inicializarse.');
-  } else if (message.type === 'output') {
-    appendConsole(message.channel === 'stderr' ? 'error' : 'output', message.text ?? '');
-  } else if (message.type === 'input-needed') {
-    waitingForInput.value = true;
-  } else if (message.type === 'run-started') {
-    running.value = true;
-  } else if (message.type === 'run-finished') {
-    running.value = false;
-    waitingForInput.value = false;
-    appendConsole('system', '✓ Ejecución terminada');
-  } else if (message.type === 'run-stopped') {
-    running.value = false;
-    waitingForInput.value = false;
-    appendConsole('system', 'Ejecución detenida');
-  } else if (message.type === 'run-error') {
-    running.value = false;
-    waitingForInput.value = false;
-    const trace = message.message ?? 'Python terminó con un error.';
-    executionError.value = executionSummary(trace);
-    executionErrorLine.value = executionLine(trace);
-    appendConsole('error', trace);
-    if (executionErrorLine.value) nextTick(() => focusLine(executionErrorLine.value ?? 1));
   } else if (message.type === 'fatal') {
+    runId.value = null;
+    stopping.value = false;
+    waitingForInput.value = false;
+    inputSessionStarted.value = false;
+    diagnosticsPending.value = false;
     runtimeState.value = 'error';
     runtimeError.value = message.message ?? 'No se pudo preparar Python.';
   } else if (message.type === 'analysis-result' && typeof message.id === 'number') {
     pendingRequests.get(message.id)?.(message.result as DiagnosticResult | null);
     pendingRequests.delete(message.id);
+  } else if (runId.value !== null && message.id === runId.value) {
+    handleRunMessage(message);
   }
+}
+
+function handleRunMessage(message: PythonRuntimeMessage): void {
+  if (message.type === 'output') {
+    appendConsole(message.channel === 'stderr' ? 'error' : 'output', message.text ?? '');
+    return;
+  }
+  if (message.type === 'input-needed') {
+    if (stopping.value) return;
+    revealConsole();
+    inputSessionStarted.value = true;
+    waitingForInput.value = true;
+    return;
+  }
+
+  if (message.type !== 'run-finished' && message.type !== 'run-stopped' && message.type !== 'run-error') return;
+  runId.value = null;
+  stopping.value = false;
+  waitingForInput.value = false;
+  inputSessionStarted.value = false;
+  inputValue.value = '';
+  if (message.type === 'run-finished') {
+    appendConsole('system', '✓ Ejecución terminada');
+  } else if (message.type === 'run-stopped') {
+    appendConsole('system', 'Ejecución detenida');
+  } else if (message.type === 'run-error') {
+    revealConsole();
+    const trace = message.message ?? 'Python terminó con un error.';
+    executionError.value = executionSummary(trace);
+    executionErrorLine.value = executionLine(trace);
+    appendConsole('error', trace);
+  }
+  scheduleDiagnostics();
+  scheduleSignature();
 }
 
 function updateCursor(view: EditorView): void {
@@ -760,13 +856,16 @@ function scheduleEditorStatus(view: EditorView): void {
   }, 180);
 }
 
+function flushCode(): void {
+  window.clearTimeout(modelSyncTimer);
+  modelSyncTimer = undefined;
+  const latest = editor.value?.state.doc.toString();
+  if (latest !== undefined && latest !== props.code) emit('update-code', props.pageId, latest);
+}
+
 function scheduleModelSync(): void {
-  if (modelSyncTimer !== undefined) window.clearTimeout(modelSyncTimer);
-  modelSyncTimer = window.setTimeout(() => {
-    const latest = editor.value?.state.doc.toString();
-    if (latest !== undefined && model.value !== latest) model.value = latest;
-    modelSyncTimer = undefined;
-  }, 240);
+  window.clearTimeout(modelSyncTimer);
+  modelSyncTimer = window.setTimeout(flushCode, 240);
 }
 
 function createEditor(): void {
@@ -774,10 +873,11 @@ function createEditor(): void {
   const editorView = new EditorView({
     parent: editorHost.value,
     state: EditorState.create({
-      doc: model.value,
+      doc: props.code,
       extensions: [
         keymap.of([
           { key: 'Tab', run: (view) => acceptCompletion(view) || indentMore(view) },
+          { key: 'Shift-Tab', run: indentLess },
           { key: 'Mod-Enter', run: () => runScript() },
           { key: 'Mod-f', run: () => { void openFind(); return true; } },
           { key: 'Mod-h', run: () => { void openFind(true); return true; } },
@@ -795,6 +895,7 @@ function createEditor(): void {
         search({ top: true }),
         syntaxHighlighting(codeHighlight),
         editorTheme,
+        EditorView.contentAttributes.of({ 'aria-label': 'Código Python' }),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
             scheduleModelSync();
@@ -805,7 +906,6 @@ function createEditor(): void {
             signatureHelp.value = '';
             typeAnalysisComplete.value = false;
             scheduleDiagnostics();
-            scheduleSignature();
           }
           if (update.selectionSet || update.docChanged) {
             scheduleEditorStatus(update.view);
@@ -819,52 +919,63 @@ function createEditor(): void {
   updateCursor(editorView);
 }
 
-watch(model, (nextValue) => {
+watch(() => props.code, (nextValue) => {
   const view = editor.value;
   if (!view || view.state.doc.toString() === nextValue) return;
+  window.clearTimeout(modelSyncTimer);
+  modelSyncTimer = undefined;
   view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: nextValue } });
 });
 
-watch(consoleLines, async () => {
-  await nextTick();
-  if (consoleScroll.value) consoleScroll.value.scrollTop = consoleScroll.value.scrollHeight;
+watch([consoleLines, consoleVisible], () => {
+  if (consoleScroll.value && consoleVisible.value) consoleScroll.value.scrollTop = consoleScroll.value.scrollHeight;
+}, { flush: 'post' });
+
+const dialogOpen = computed(() => exportModalOpen.value || importModalOpen.value || pythonGuideOpen.value);
+watch([waitingForInput, dialogOpen], ([waiting, dialog]) => {
+  if (waiting && !dialog) focusConsoleInput();
+}, { flush: 'post' });
+
+watch([consolePosition, bottomSize, rightSize], () => {
+  window.clearTimeout(layoutSaveTimer);
+  layoutSaveTimer = window.setTimeout(saveLayout, 180);
 });
 
 onMounted(() => {
+  restoreLayout();
+  wideLayout.addEventListener('change', updateDockAvailability);
+  window.addEventListener('pagehide', flushCode, { capture: true });
   createEditor();
-  const connection = getPythonRuntimeConnection();
-  if (!connection) {
-    runtimeState.value = 'error';
-    runtimeError.value = 'Este origen necesita COOP/COEP para habilitar la consola interactiva y detener el código.';
-    return;
+  try {
+    runtime = getPythonRuntimeConnection();
+    if (runtime) {
+      unsubscribeRuntime = runtime.subscribe(handleWorkerMessage);
+      return;
+    }
+    runtimeError.value = 'Este origen requiere las cabeceras COOP y COEP para ejecutar Python.';
+  } catch (error) {
+    runtimeError.value = error instanceof Error ? error.message : 'No se pudo preparar Python.';
   }
-  worker.value = connection.worker;
-  inputControl = connection.inputControl;
-  inputData = connection.inputData;
-  interruptView = connection.interruptView;
-  unsubscribeRuntime = connection.subscribe(handleWorkerMessage);
+  runtimeState.value = 'error';
 });
 
 onBeforeUnmount(() => {
-  if (running.value) stopScript();
-  if (modelSyncTimer !== undefined) window.clearTimeout(modelSyncTimer);
-  if (cursorSyncTimer !== undefined) window.clearTimeout(cursorSyncTimer);
-  if (searchRefreshTimer !== undefined) window.clearTimeout(searchRefreshTimer);
-  const latestCode = editor.value?.state.doc.toString();
-  if (latestCode !== undefined && model.value !== latestCode) model.value = latestCode;
+  stopScript();
+  if (modelSyncTimer !== undefined) flushCode();
+  if (layoutSaveTimer !== undefined) saveLayout();
+  wideLayout.removeEventListener('change', updateDockAvailability);
+  window.removeEventListener('pagehide', flushCode, { capture: true });
+  window.clearTimeout(cursorSyncTimer);
+  window.clearTimeout(searchRefreshTimer);
+  window.clearTimeout(diagnosticsTimer);
+  window.clearTimeout(signatureTimer);
   disposed = true;
-  if (diagnosticsTimer !== undefined) window.clearTimeout(diagnosticsTimer);
-  if (signatureTimer !== undefined) window.clearTimeout(signatureTimer);
   for (const resolve of pendingRequests.values()) resolve(null);
   pendingRequests.clear();
   unsubscribeRuntime?.();
-  unsubscribeRuntime = null;
   editor.value?.destroy();
-  worker.value = null;
   editor.value = null;
-  inputControl = null;
-  inputData = null;
-  interruptView = null;
+  runtime = null;
 });
 </script>
 
@@ -872,45 +983,74 @@ onBeforeUnmount(() => {
   <section class="knote-code-workspace" aria-label="Editor de Python">
     <Teleport to="#knote-code-actions-target">
       <div class="knote-code-actions" aria-label="Acciones de Python">
-        <Button variant="soft" color="neutral" size="sm" :prefix-icon="BookOpen" aria-label="Abrir la guía rápida de Python" title="Guía rápida de Python" @click="pythonGuideOpen = true">Guía Python</Button>
-        <Button variant="soft" color="neutral" size="sm" :prefix-icon="Search" aria-label="Buscar y reemplazar" title="Buscar y reemplazar (Ctrl/Cmd+F)" :disabled="!editor" @click="openFind()">Buscar</Button>
-        <Button variant="soft" color="neutral" size="sm" :prefix-icon="Upload" :disabled="running" @click="openImportDialog">Abrir .py</Button>
-        <Button variant="soft" color="neutral" size="sm" :prefix-icon="Download" @click="openExportDialog">Descargar .py</Button>
-        <Button v-if="!running" variant="solid" color="primary" size="sm" :prefix-icon="Play" :disabled="runtimeState !== 'ready'" @click="runScript">Ejecutar <kbd>{{ runShortcut }}</kbd></Button>
-        <Button v-else variant="soft" color="destructive" size="sm" :prefix-icon="Square" @click="stopScript">Detener</Button>
+        <DropdownMenu :id="`python-script-actions-${pageId}`" label="Acciones del script" align="end" variant="surface" :items="scriptItems" @select="handleScriptAction">
+          <template #trigger><Icon :icon="MoreHorizontal" size="sm" /><span class="sr-only">Acciones del script</span></template>
+        </DropdownMenu>
+        <Button variant="soft" color="neutral" size="sm" :prefix-icon="Search" aria-label="Buscar y reemplazar" title="Buscar y reemplazar (Ctrl/Cmd+F)" :disabled="!editor" @click="openFind()"><span class="knote-code-search-label">Buscar</span></Button>
+        <DropdownMenu :id="`python-layout-${pageId}`" label="Distribución del editor" align="end" variant="surface" :items="layoutItems" @select="changeLayout">
+          <template #trigger><Icon :icon="!consoleVisible ? LayoutPanelTop : consoleDockedRight ? PanelRight : PanelBottom" size="sm" /><span class="knote-code-layout-label" aria-hidden="true">Distribución</span><span class="sr-only">Distribución del editor</span></template>
+        </DropdownMenu>
+        <Button v-if="!running" variant="solid" color="primary" size="sm" :prefix-icon="Play" aria-label="Ejecutar Python" title="Ejecutar Python" :disabled="runtimeState !== 'ready'" @click="runScript">Ejecutar <kbd>{{ runShortcut }}</kbd></Button>
+        <Button v-else variant="soft" color="destructive" size="sm" :prefix-icon="Square" aria-label="Detener ejecución" :disabled="stopping" @click="stopScript">{{ stopping ? 'Deteniendo…' : 'Detener' }}</Button>
       </div>
     </Teleport>
 
-    <p v-if="runtimeError" class="knote-code-runtime-error" role="alert"><Icon :icon="AlertCircle" size="sm" />{{ runtimeError }} Revisa las cabeceras COOP y COEP del servidor.</p>
+    <p v-if="runtimeError" class="knote-code-runtime-error" role="alert"><Icon :icon="AlertCircle" size="sm" />{{ runtimeError }}</p>
     <div v-if="executionError" class="knote-code-execution-error" role="alert">
       <Icon :icon="AlertCircle" size="sm" />
       <div><strong>Error al ejecutar {{ activeFileName }}</strong><span>{{ executionError }}</span></div>
       <Button v-if="executionErrorLine" variant="soft" color="destructive" size="sm" @click="focusLine(executionErrorLine)">Ir a línea {{ executionErrorLine }}</Button>
     </div>
-    <div v-if="diagnostics.length" class="knote-code-problems" role="region" aria-label="Problemas detectados">
-      <div class="knote-code-problems-heading"><Icon :icon="AlertCircle" size="xs" /><strong>{{ errorDiagnostics.length }} {{ errorDiagnostics.length === 1 ? 'error' : 'errores' }}<span v-if="warningCount"> · {{ warningCount }} {{ warningCount === 1 ? 'aviso' : 'avisos' }}</span></strong><Button v-if="errorDiagnostics.length" variant="soft" color="destructive" size="sm" @click="jumpToDiagnostic(1)">Siguiente <kbd>F8</kbd></Button></div>
-      <div class="knote-code-problems-list">
-        <Button v-for="issue in visibleDiagnostics" :key="`${issue.source}-${issue.from}-${issue.message}`" variant="soft" :color="issue.severity === 'error' ? 'destructive' : 'neutral'" size="sm" class="knote-code-problem" :title="issue.message" @click="focusDiagnostic(issue)">
-          <span class="knote-code-problem-line">L{{ issue.line }}</span><span class="knote-code-problem-message">{{ issue.message }}</span>
-        </Button>
-        <span v-if="hiddenDiagnosticCount" class="knote-code-problems-more">+{{ hiddenDiagnosticCount }} más</span>
-      </div>
-    </div>
-
-    <Resizable :id="`python-editor-console-${pageId}`" v-model="panelSize" label="Cambiar el tamaño de la consola" orientation="vertical" :min="40" :max="86" :step="2" variant="outline" rounded="lg" class="knote-code-panels">
+    <Resizable
+      :id="`python-editor-console-${pageId}`"
+      v-model="panelSize"
+      label="Cambiar el espacio entre editor y consola"
+      :orientation="consoleDockedRight ? 'horizontal' : 'vertical'"
+      :min="consoleDockedRight ? 44 : 42"
+      :max="consoleDockedRight ? 78 : 82"
+      :step="2"
+      size="lg"
+      variant="surface"
+      rounded="none"
+      class="knote-code-panels"
+      :style="stackedPanelStyle"
+      :class="{ 'knote-code-panels--editor-only': !consoleVisible }"
+    >
       <template #first>
         <div class="knote-code-editor-panel">
           <div class="knote-code-filebar">
-            <span class="knote-code-file-name"><Icon :icon="Code2" size="sm" /> {{ activeFileName }}</span>
+            <span class="knote-code-file-name" :title="activeFileName"><Icon :icon="Code2" size="sm" /><span>{{ activeFileName }}</span></span>
             <div class="knote-code-analysis-state" aria-live="polite">
               <template v-if="runtimeState === 'error'"><span class="knote-code-diagnostic-count knote-code-diagnostic-count--error"><Icon :icon="AlertCircle" size="xs" />Python no disponible</span></template>
               <template v-else-if="runtimeState !== 'ready'"><Icon :icon="LoaderCircle" size="xs" class="knote-code-spinner" />Preparando editor</template>
               <template v-else-if="diagnosticsPending"><Icon :icon="LoaderCircle" size="xs" class="knote-code-spinner" />Comprobando código</template>
               <span v-else-if="diagnosticsNotice" class="knote-code-diagnostic-count knote-code-diagnostic-count--warning" :title="diagnosticsNotice"><Icon :icon="AlertCircle" size="xs" />Análisis limitado</span>
               <template v-else>
-                <span><Icon :icon="diagnostics.length ? AlertCircle : Check" size="xs" />{{ diagnostics.length ? 'Análisis completado' : typeAnalysisComplete ? 'Análisis correcto' : 'Sintaxis correcta' }}</span>
-                <Button v-if="runtimeState === 'ready'" variant="soft" color="neutral" size="sm" :disabled="diagnosticsPending" @click="runTypeAnalysis">Comprobar tipos</Button>
+                <span v-if="!diagnostics.length" class="knote-code-syntax-status"><Icon :icon="Check" size="xs" />{{ typeAnalysisComplete ? 'Análisis correcto' : 'Sintaxis correcta' }}</span>
+                <Button variant="soft" color="neutral" size="sm" :disabled="running" @click="runTypeAnalysis">Comprobar tipos</Button>
               </template>
+              <Button
+                v-if="diagnostics.length"
+                variant="soft"
+                :color="errorDiagnostics.length ? 'destructive' : 'neutral'"
+                size="sm"
+                :prefix-icon="AlertCircle"
+                :aria-expanded="problemsOpen"
+                :aria-controls="`python-problems-${pageId}`"
+                @click="problemsOpen = !problemsOpen"
+              >{{ diagnostics.length }} {{ diagnostics.length === 1 ? 'problema' : 'problemas' }}</Button>
+            </div>
+          </div>
+          <div v-if="diagnostics.length" v-show="problemsOpen" :id="`python-problems-${pageId}`" class="knote-code-problems" role="region" aria-label="Problemas detectados">
+            <div class="knote-code-problems-heading">
+              <strong>{{ errorDiagnostics.length }} {{ errorDiagnostics.length === 1 ? 'error' : 'errores' }}<span v-if="warningCount"> · {{ warningCount }} {{ warningCount === 1 ? 'aviso' : 'avisos' }}</span></strong>
+              <Button v-if="errorDiagnostics.length" variant="soft" color="destructive" size="sm" @click="jumpToDiagnostic(1)">Siguiente <kbd>F8</kbd></Button>
+            </div>
+            <div class="knote-code-problems-list">
+              <Button v-for="issue in visibleDiagnostics" :key="`${issue.source}-${issue.from}-${issue.message}`" variant="soft" :color="issue.severity === 'error' ? 'destructive' : 'neutral'" size="sm" class="knote-code-problem" :title="issue.message" @click="focusDiagnostic(issue)">
+                <span class="knote-code-problem-line">L{{ issue.line }}</span><span class="knote-code-problem-message">{{ issue.message }}</span>
+              </Button>
+              <span v-if="hiddenDiagnosticCount" class="knote-code-problems-more">+{{ hiddenDiagnosticCount }} más</span>
             </div>
           </div>
           <div v-if="searchOpen" class="knote-code-search" role="search" aria-label="Buscar y reemplazar en el script" @keydown="handleSearchKeydown">
@@ -944,22 +1084,22 @@ onBeforeUnmount(() => {
       </template>
 
       <template #second>
-        <div class="knote-code-console-panel">
+        <div class="knote-code-console-panel" role="region" aria-label="Consola de Python">
           <div class="knote-code-console-heading">
             <div><Icon :icon="Terminal" size="sm" /><strong>Consola</strong></div>
             <div class="knote-code-console-actions">
-              <Badge v-if="running" variant="soft" color="warning" size="sm">{{ waitingForInput ? 'Esperando entrada' : 'Ejecutando' }}</Badge>
+              <Badge v-if="running" variant="soft" color="warning" size="sm" role="status">{{ stopping ? 'Deteniendo…' : waitingForInput ? 'Esperando entrada' : 'Ejecutando' }}</Badge>
               <Button variant="soft" color="neutral" size="sm" shape="fab" :prefix-icon="Trash2" aria-label="Limpiar consola" title="Limpiar consola" @click="clearConsole" />
             </div>
           </div>
           <div ref="consoleScroll" class="knote-code-console-scroll" role="log" aria-label="Salida de Python" aria-live="polite" aria-relevant="additions text">
             <pre v-for="entry in consoleLines" :key="entry.id" :class="['knote-code-console-line', `knote-code-console-line--${entry.kind}`]">{{ entry.text }}</pre>
-            <p v-if="consoleLines.length === 0" class="knote-code-console-empty"><Icon :icon="CircleHelp" size="sm" />La salida, los errores y las preguntas de <code>input()</code> aparecerán aquí.</p>
+            <p v-if="consoleLines.length === 0" class="knote-code-console-empty">Ejecuta el script para ver la salida.</p>
           </div>
-          <div v-if="waitingForInput" class="knote-code-input-row">
-            <Input :id="`python-input-${$props.pageId}`" v-model="inputValue" label="Entrada solicitada por input()" placeholder="Escribe una respuesta…" size="sm" variant="surface" @keydown.enter.prevent="submitInput" />
-            <Button variant="solid" color="primary" size="sm" :prefix-icon="Play" aria-label="Enviar entrada a Python" @click="submitInput">Enviar</Button>
-          </div>
+          <form v-if="inputSessionStarted" ref="consoleInput" class="knote-code-input-row" @submit.prevent="submitInput">
+            <Input :id="`python-input-${pageId}`" v-model="inputValue" label="Entrada de Python" placeholder="Escribe una respuesta…" autocomplete="off" size="sm" variant="surface" />
+            <Button type="submit" variant="solid" color="primary" size="sm" :disabled="!waitingForInput">Enviar</Button>
+          </form>
         </div>
       </template>
     </Resizable>

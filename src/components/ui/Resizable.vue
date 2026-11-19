@@ -199,7 +199,7 @@ function handleKeydown(event: KeyboardEvent): void {
       data-balsa="resizable-handle"
       role="separator"
       :aria-label="props.label"
-      :aria-orientation="props.orientation"
+      :aria-orientation="props.orientation === 'horizontal' ? 'vertical' : 'horizontal'"
       :aria-valuemin="limits.minimum"
       :aria-valuemax="limits.maximum"
       :aria-valuenow="Math.round(value)"

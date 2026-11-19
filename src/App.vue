@@ -416,6 +416,12 @@ function setActive(id: string, updateHistory = true): void {
     if (window.location.hash !== fragment) window.history.pushState({ pageId: id }, '', window.location.pathname + window.location.search + fragment);
   }
 }
+function updatePythonCode(pageId: string, code: string): void {
+  const page = pages.value.find((item) => item.id === pageId);
+  if (page?.type !== 'code' || page.content === code) return;
+  page.content = code;
+  touchPage(page);
+}
 function syncPageFromHistory(): void { setActive(pageIdFromHash(), false); }
 function revealSidebar(): void {
   if (sidebarCloseTimer !== undefined) window.clearTimeout(sidebarCloseTimer);
@@ -1076,7 +1082,7 @@ onBeforeUnmount(() => {
             <Badge variant="outline" color="secondary" size="sm">PYTHON</Badge>
             <Input :id="'title-' + activePage.id" v-model="activePage.title" label="Título de la página" placeholder="Python" size="md" variant="surface" class="knote-title-field" @update:model-value="touchPage(activePage)" />
           </header>
-          <CodeWorkspace :key="activePage.id + '-python-editor'" v-model="activePage.content" :page-id="activePage.id" :page-title="activePage.title" @update:model-value="touchPage(activePage)" />
+          <CodeWorkspace :key="activePage.id + '-python-editor'" :code="activePage.content" :page-id="activePage.id" :page-title="activePage.title" @update-code="updatePythonCode" />
         </template>
 
         <template v-else>

@@ -1,21 +1,3 @@
-.knote-canvas--code {
-  width: min(100%, 96rem);
-  max-width: 96rem;
-  padding: .8rem clamp(1rem, 2.2vw, 2rem) 2rem;
-}
-.knote-code-page-heading {
-  display: grid;
-  grid-template-columns: 3.7rem minmax(0, 1fr);
-  align-items: center;
-  column-gap: .85rem;
-  min-height: 3.7rem;
-  margin-bottom: .35rem;
-}
-.knote-code-page-heading .knote-page-glyph { grid-column: 1; grid-row: 1; min-height: 3.7rem; }
-.knote-code-page-heading > [data-balsa="badge"] { display: none; }
-.knote-code-page-heading > [data-balsa="input"] { grid-column: 2; grid-row: 1; min-width: 0; margin: 0; }
-.knote-code-page-heading .knote-title-field { margin: 0; }
-
 .knote-code-workspace {
   --knote-code-editor-surface: var(--balsa-role-background);
   --knote-code-raised-surface: color-mix(in oklab, var(--balsa-role-surface) 82%, var(--balsa-role-background));
@@ -30,14 +12,13 @@
   display: flex;
   min-width: 0;
   flex-direction: column;
-  overflow: visible;
   color: var(--balsa-role-foreground);
 }
-.knote-code-actions { display: flex; min-width: 0; align-items: center; gap: .55rem; }
-.knote-code-actions { flex: 0 0 auto; }
-.knote-code-actions [data-balsa="button"] { min-height: 2.05rem; font-size: .68rem; }
-.knote-code-actions kbd { margin-left: .35rem; padding: .08rem .25rem; border: 1px solid color-mix(in oklab, currentColor 18%, transparent); border-radius: .25rem; font: inherit; font-size: .56rem; opacity: .76; }
-.knote-code-actions-target { display: flex; min-width: 0; align-items: center; justify-content: flex-end; }
+.knote-code-actions { display: flex; flex: 0 0 auto; align-items: center; gap: .35rem; }
+.knote-code-actions [data-balsa="button"],
+.knote-code-actions [data-balsa="dropdown-menu"] > button { min-height: 2rem; font-size: .73rem; }
+.knote-code-actions kbd { margin-left: .35rem; font: inherit; font-size: .64rem; opacity: .76; }
+.knote-code-actions-target { display: flex; flex: 0 0 auto; align-items: center; }
 .knote-code-runtime-error {
   display: flex;
   align-items: flex-start;
@@ -66,28 +47,39 @@
 .knote-code-execution-error span { overflow: hidden; color: var(--balsa-role-foreground); text-overflow: ellipsis; white-space: nowrap; }
 .knote-code-execution-error [data-balsa="button"] { flex: 0 0 auto; }
 .knote-code-panels {
-  height: min(68vh, 57rem);
-  min-height: 26rem;
-  border: 0 !important;
-  border-radius: 0;
-  background: transparent !important;
-  color: var(--balsa-role-foreground) !important;
+  min-height: 23rem;
+  flex: 1 1 auto;
+  border: 1px solid var(--balsa-role-border);
+  border-radius: .5rem;
+  background: var(--knote-code-editor-surface);
 }
 .knote-code-panels > [data-balsa="resizable-panel"] { min-height: 0; overflow: hidden; }
 .knote-code-panels > [data-balsa="resizable-handle"] {
-  height: 8px !important;
-  min-height: 8px;
-  overflow: visible;
-  padding: 0;
-  background: transparent !important;
+  background: var(--knote-code-raised-surface);
   color: var(--balsa-role-secondary);
 }
-.knote-code-panels > [data-balsa="resizable-handle"] > [data-balsa="icon"] { opacity: 0; transition: opacity 140ms ease, color 140ms ease; }
-.knote-code-panels > [data-balsa="resizable-handle"]:hover { background: color-mix(in oklab, var(--balsa-role-accent) 16%, transparent) !important; }
-.knote-code-panels > [data-balsa="resizable-handle"]:focus-visible { background: color-mix(in oklab, var(--balsa-role-accent) 45%, transparent) !important; outline: 2px solid var(--balsa-role-focus-ring); outline-offset: 1px; }
-.knote-code-panels > [data-balsa="resizable-handle"]:hover > [data-balsa="icon"],
-.knote-code-panels > [data-balsa="resizable-handle"]:focus-visible > [data-balsa="icon"] { opacity: .9; color: var(--balsa-role-accent); }
-.knote-code-editor-panel, .knote-code-console-panel { position: relative; display: flex; width: 100%; height: 100%; min-height: 0; flex-direction: column; overflow: hidden; background: var(--knote-code-editor-surface); color: var(--balsa-role-foreground); }
+.knote-code-panels > [data-balsa="resizable-handle"]:is(:hover, :focus-visible) {
+  background: color-mix(in oklab, var(--balsa-role-accent) 18%, var(--knote-code-raised-surface));
+  color: var(--balsa-role-foreground);
+}
+.knote-code-panels > [data-balsa="resizable-handle"]:focus-visible {
+  outline: 2px solid var(--balsa-role-focus-ring);
+  outline-offset: -2px;
+}
+.knote-code-panels--editor-only { grid-template-rows: minmax(0, 1fr) !important; }
+.knote-code-panels--editor-only > :not(:first-child) { display: none; }
+.knote-code-editor-panel, .knote-code-console-panel {
+  position: relative;
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--knote-code-editor-surface);
+  color: var(--balsa-role-foreground);
+  container-type: inline-size;
+}
 .knote-code-filebar, .knote-code-console-heading {
   display: flex;
   min-height: 2.4rem;
@@ -96,15 +88,18 @@
   justify-content: space-between;
   gap: .8rem;
   padding: 0 .85rem;
-  border-bottom: 1px solid transparent;
-  background: transparent;
+  border-bottom: 1px solid var(--balsa-role-border);
+  background: var(--knote-code-raised-surface);
   color: var(--balsa-role-secondary);
-  font-size: .62rem;
+  font-size: .72rem;
 }
 .knote-code-file-name, .knote-code-analysis-state { display: inline-flex; align-items: center; gap: .4rem; }
-.knote-code-file-name { color: var(--balsa-role-foreground); font-weight: 600; }
+.knote-code-file-name { min-width: 0; color: var(--balsa-role-foreground); font: 600 .75rem/1.3 var(--balsa-font-mono, Consolas, monospace); }
+.knote-code-file-name > svg { flex: 0 0 auto; }
+.knote-code-file-name > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.knote-code-syntax-status { display: inline-flex; align-items: center; gap: .3rem; }
 .knote-code-file-name > svg { color: var(--balsa-role-accent); }
-.knote-code-analysis-state { color: var(--balsa-role-secondary); }
+.knote-code-analysis-state { flex: 0 0 auto; color: var(--balsa-role-secondary); }
 .knote-code-analysis-state > svg:not(.knote-code-spinner) { color: var(--balsa-role-success); }
 .knote-code-diagnostic-count { display: inline-flex; align-items: center; gap: .3rem; font-weight: 600; }
 .knote-code-diagnostic-count--error { color: var(--balsa-role-destructive); }
@@ -124,7 +119,7 @@
   border-bottom: 1px solid var(--balsa-role-border);
   background: color-mix(in oklab, var(--balsa-role-surface) 62%, var(--knote-code-editor-surface));
 }
-.knote-code-search-row { display: flex; min-width: 0; align-items: center; gap: .38rem; }
+.knote-code-search-row { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: .38rem; }
 .knote-code-search-field { display: flex; min-width: 10rem; flex: 1 1 16rem; align-items: center; gap: .45rem; }
 .knote-code-search-field > svg { flex: 0 0 auto; color: var(--balsa-role-secondary); }
 .knote-code-search-field [data-balsa="input"] { min-width: 0; flex: 1 1 auto; }
@@ -196,8 +191,7 @@
   white-space: nowrap;
   box-shadow: 0 8px 20px #0004;
 }
-.knote-code-console-panel { background: var(--knote-code-editor-surface); }
-.knote-code-console-heading { min-height: 2.35rem; border-bottom-color: transparent; background: transparent; }
+.knote-code-console-heading { min-height: 2rem; flex-wrap: wrap; gap: .15rem .4rem; }
 .knote-code-console-heading > div:first-child, .knote-code-console-actions { display: flex; align-items: center; gap: .5rem; }
 .knote-code-console-heading > div:first-child > svg { color: var(--balsa-role-accent); }
 .knote-code-console-heading strong { color: var(--balsa-role-foreground); font-size: .66rem; font-weight: 640; }
@@ -210,7 +204,7 @@
   overflow: auto;
   padding: .65rem .85rem;
   color: var(--balsa-role-foreground);
-  font: .68rem/1.55 var(--balsa-font-mono, "Cascadia Code", Consolas, monospace);
+  font: .8rem/1.55 var(--balsa-font-mono, "Cascadia Code", Consolas, monospace);
   scrollbar-color: color-mix(in oklab, var(--balsa-role-secondary) 50%, transparent) transparent;
 }
 .knote-code-console-line { margin: 0 0 .25rem; overflow-wrap: anywhere; white-space: pre-wrap; }
@@ -218,21 +212,19 @@
 .knote-code-console-line--error { color: var(--balsa-role-destructive); }
 .knote-code-console-line--system { color: var(--balsa-role-secondary); }
 .knote-code-console-line--input { color: var(--balsa-role-success); }
-.knote-code-console-empty { display: flex; align-items: flex-start; gap: .45rem; margin: .15rem 0; color: var(--balsa-role-secondary); font: .65rem/1.55 var(--balsa-font-body, sans-serif); }
-.knote-code-console-empty > svg { flex: 0 0 auto; margin-top: .05rem; }
-.knote-code-console-empty code { color: var(--balsa-role-foreground); font-family: var(--balsa-font-mono, Consolas, monospace); }
+.knote-code-console-empty { margin: .15rem 0; color: var(--balsa-role-secondary); font: .75rem/1.45 var(--balsa-font-body, sans-serif); }
 .knote-code-input-row {
   display: flex;
   flex: 0 0 auto;
   align-items: flex-end;
   gap: .5rem;
   padding: .5rem .7rem .65rem;
-  border-top: 0;
-  background: transparent;
+  border-top: 1px solid var(--balsa-role-border);
+  background: var(--knote-code-raised-surface);
 }
 .knote-code-input-row [data-balsa="input"] { min-width: 0; flex: 1 1 auto; }
 .knote-code-input-row [data-balsa="input"] label { margin-bottom: .18rem; color: var(--balsa-role-secondary); font-size: .58rem; }
-.knote-code-input-row [data-balsa="input"] input { min-height: 2rem; border-color: var(--balsa-role-border); background: var(--balsa-role-background); color: var(--balsa-role-foreground); font-size: .68rem; }
+.knote-code-input-row [data-balsa="input"] input { min-height: 2rem; border-color: var(--balsa-role-border); background: var(--balsa-role-background); color: var(--balsa-role-foreground); font-size: .82rem; }
 .knote-code-input-row [data-balsa="button"] { min-height: 2rem; flex: 0 0 auto; font-size: .65rem; }
 .knote-python-hover { max-width: min(29rem, 72vw); padding: .55rem .7rem; }
 .knote-python-hover strong { color: var(--balsa-role-accent); font: 600 .68rem/1.4 var(--balsa-font-mono, Consolas, monospace); }
@@ -251,41 +243,34 @@
   color: var(--balsa-role-foreground) !important;
 }
 
-@media (max-width: 760px) {
+@container (max-width: 38rem) {
   .knote-code-search { gap: .42rem; padding: .42rem .5rem; }
-  .knote-code-search-row { flex-wrap: wrap; }
-  .knote-code-search-field { flex-basis: 14rem; }
   .knote-code-search-count { min-width: 0; margin-left: auto; }
   .knote-code-search-row--replace { padding-left: 0; }
-  .knote-code-search-field--replace { flex-basis: 100%; }
   .knote-code-search-toggles { margin-left: auto; }
-  .knote-code-problems { align-items: flex-start; flex-direction: column; gap: .15rem; padding-block: .35rem; }
-  .knote-code-problems-list { width: 100%; flex-basis: auto; }
-  .knote-canvas--code { padding: .75rem .8rem 1.5rem; }
-  .knote-code-actions { margin-left: auto; }
-  .knote-code-actions [data-balsa="button"] { padding-inline: .48rem; }
-  .knote-code-actions kbd { display: none; }
-  .knote-code-panels { height: 68vh; min-height: 24rem; }
   .knote-code-statusbar > span:last-child { display: none; }
-  .knote-code-page-heading { grid-template-columns: 3.25rem minmax(0, 1fr); column-gap: .6rem; }
-  .knote-code-page-heading .knote-page-glyph { min-height: 3.25rem; }
-  .knote-code-analysis-state { gap: .3rem; }
-  .knote-code-analysis-state [data-balsa="button"] { padding-inline: .38rem; }
 }
-@media (max-width: 460px) {
-  .knote-code-actions { gap: .3rem; }
-  .knote-code-actions [data-balsa="button"] { font-size: .61rem; }
-  .knote-code-actions [data-balsa="button"] > span:not([data-balsa="icon"]) { display: none; }
-  .knote-code-actions [data-balsa="button"] { width: 2rem; padding-inline: 0; }
-  .knote-code-panels { height: 70vh; min-height: 22rem; }
+@container (max-width: 28rem) {
+  .knote-code-syntax-status { display: none; }
+}
+@container (max-width: 23rem) {
   .knote-code-search-row { gap: .28rem; }
   .knote-code-search-count { flex: 1 1 100%; order: 1; margin-left: .2rem; }
-  .knote-code-search-row--replace [data-balsa="button"] { padding-inline: .42rem; font-size: .57rem; }
   .knote-code-search-toggles { width: 100%; margin-left: 0; }
   .knote-code-search-toggles [data-balsa="button"] { flex: 1 1 auto; }
   .knote-code-statusbar { padding-inline: .55rem; }
-  .knote-code-input-row { align-items: stretch; }
-  .knote-code-input-row [data-balsa="button"] { align-self: flex-end; }
+  .knote-code-filebar, .knote-code-console-heading { padding-inline: .5rem; gap: .4rem; }
+  .knote-code-input-row { padding-inline: .5rem; }
+}
+@media (max-width: 760px) {
+  .knote-code-actions kbd,
+  .knote-code-layout-label { display: none; }
+}
+@media (max-width: 460px) {
+  .knote-code-actions { gap: .25rem; }
+  .knote-code-search-label { display: none; }
+  .knote-code-actions [data-balsa="button"],
+  .knote-code-actions [data-balsa="dropdown-menu"] > button { padding-inline: .45rem !important; }
   .knote-code-execution-error { align-items: flex-start; flex-wrap: wrap; }
   .knote-code-execution-error > div { flex-basis: calc(100% - 2rem); }
   .knote-code-execution-error [data-balsa="button"] { margin-left: 1.7rem; }
@@ -294,90 +279,67 @@
   .knote-code-spinner { animation-duration: 3s; }
 }
 
-/* Code pages use the available app window as their workspace. */
 .knote-main:has(> .knote-canvas--code) {
   display: flex;
   flex-direction: column;
+  min-height: 100dvh;
   height: 100dvh;
-  min-height: 0;
-  overflow: hidden;
+  overflow: auto;
 }
 .knote-main:has(> .knote-canvas--code) > .knote-topbar {
-  position: relative;
-  top: auto;
-  height: 2.9rem;
   min-height: 2.9rem;
-  flex: 0 0 2.9rem;
+  height: auto;
+  flex: 0 0 auto;
 }
-.knote-main:has(> .knote-canvas--code) .knote-code-actions-target { flex: 0 0 auto; }
 .knote-main:has(> .knote-canvas--code) > .knote-canvas--code {
   display: flex;
   width: 100%;
   max-width: none;
-  height: auto;
   min-height: 0;
-  flex: 1 1 auto;
+  flex: 1 0 0;
   flex-direction: column;
   margin: 0;
-  padding: .45rem clamp(.65rem, 1.1vw, 1.25rem) .6rem;
+  padding: .35rem clamp(.5rem, 1.1vw, 1.25rem) .6rem;
+}
+.knote-code-page-heading {
+  display: grid;
+  grid-template-columns: 2.7rem minmax(0, 1fr);
+  min-height: 2.7rem;
+  flex: 0 0 auto;
+  align-items: center;
+  margin: 0 0 .3rem;
+  column-gap: .5rem;
+}
+.knote-code-page-heading > [data-balsa="badge"] { display: none; }
+.knote-code-page-heading > [data-balsa="input"] { min-width: 0; margin: 0; }
+.knote-code-page-heading > [data-balsa="input"] label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
   overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
-.knote-main:has(> .knote-canvas--code) .knote-code-page-heading {
-  grid-template-columns: 2.8rem minmax(0, 1fr);
-  min-height: 2.8rem;
-  margin: 0 0 .15rem;
-  column-gap: .45rem;
-}
-.knote-main:has(> .knote-canvas--code) .knote-code-page-heading .knote-page-glyph { min-height: 2.65rem; }
-.knote-main:has(> .knote-canvas--code) .knote-code-page-heading [id^="page-icon-"][id$="-trigger"] {
-  width: 2.55rem !important;
-  height: 2.55rem !important;
-  min-height: 2.55rem !important;
+.knote-code-page-heading input.knote-title-field { margin: 0; font-size: clamp(1.3rem, 2vw, 1.7rem) !important; }
+.knote-code-page-heading .knote-page-glyph { min-height: 2.5rem; }
+.knote-code-page-heading [id^="page-icon-"][id$="-trigger"] {
+  width: 2.45rem !important;
+  height: 2.45rem !important;
+  min-height: 2.45rem !important;
   padding: 0 !important;
 }
-.knote-main:has(> .knote-canvas--code) .knote-code-page-heading .knote-icon-trigger { width: 1.75rem !important; height: 1.75rem !important; }
-.knote-main:has(> .knote-canvas--code) .knote-code-page-heading [data-balsa="input"] label { display: none; }
-.knote-main:has(> .knote-canvas--code) .knote-code-page-heading input.knote-title-field {
-  margin: 0;
-  font-size: clamp(1.45rem, 2.1vw, 1.8rem) !important;
-}
-.knote-main:has(> .knote-canvas--code) .knote-code-workspace { min-height: 0; flex: 1 1 auto; }
-.knote-main:has(> .knote-canvas--code) .knote-code-panels {
-  height: auto;
-  min-height: 0;
-  flex: 1 1 auto;
-}
+.knote-code-page-heading .knote-icon-trigger { width: 1.65rem !important; height: 1.65rem !important; }
+.knote-code-workspace { min-height: 0; flex: 1 1 auto; }
 
 @media (max-width: 680px) {
-  .knote-main:has(> .knote-canvas--code) .knote-topbar {
-    display: flex;
-    height: 2.8rem;
-    min-height: 2.8rem;
-    flex: 0 0 2.8rem;
-    justify-content: flex-start;
-    padding: 0 .55rem;
-    border-bottom: 0;
-    background: transparent;
-    backdrop-filter: none;
+  .knote-main:has(> .knote-canvas--code) > .knote-topbar {
+    flex-wrap: wrap;
+    gap: .25rem .5rem;
+    padding: .25rem .55rem;
   }
-  .knote-main:has(> .knote-canvas--code) .knote-topbar-left [data-balsa="breadcrumb"],
-  .knote-main:has(> .knote-canvas--code) .knote-topbar-actions { display: flex; }
-  .knote-main:has(> .knote-canvas--code) .knote-mobile-nav { display: inline-flex !important; }
-  .knote-main:has(> .knote-canvas--code) > .knote-canvas--code {
-    padding: .2rem .45rem .45rem;
-  }
-  .knote-main:has(> .knote-canvas--code) .knote-code-page-heading {
-    grid-template-columns: 2.35rem minmax(0, 1fr);
-    min-height: 2.45rem;
-  }
-  .knote-main:has(> .knote-canvas--code) .knote-code-page-heading .knote-page-glyph { min-height: 2.3rem; }
-  .knote-main:has(> .knote-canvas--code) .knote-code-page-heading [id^="page-icon-"][id$="-trigger"] {
-    width: 2.2rem !important;
-    height: 2.2rem !important;
-    min-height: 2.2rem !important;
-  }
-  .knote-main:has(> .knote-canvas--code) .knote-code-page-heading .knote-icon-trigger { width: 1.5rem !important; height: 1.5rem !important; }
-  .knote-main:has(> .knote-canvas--code) .knote-code-actions { width: auto; justify-content: flex-end; gap: .28rem; }
-  .knote-main:has(> .knote-canvas--code) .knote-code-actions [data-balsa="button"] { min-height: 1.9rem; padding-inline: .42rem; font-size: .6rem; }
-  .knote-main:has(> .knote-canvas--code) .knote-code-panels { min-height: 0; }
+  .knote-main:has(> .knote-canvas--code) .knote-topbar-left { flex: 1 1 7rem; overflow: hidden; }
+  .knote-main:has(> .knote-canvas--code) .knote-topbar-left [data-balsa="breadcrumb"] ol > li:not(:last-child),
+  .knote-main:has(> .knote-canvas--code) .knote-topbar-left [data-balsa="breadcrumb"] ol > li:last-child::before { display: none; }
+  .knote-main:has(> .knote-canvas--code) .knote-topbar-actions { margin-left: auto; }
+  .knote-main:has(> .knote-canvas--code) > .knote-canvas--code { padding-top: .15rem; }
 }

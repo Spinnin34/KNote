@@ -1,3 +1,5 @@
+import { inputSlot, inputState } from '../lib/python-input';
+
 type PyodideModule = typeof import('pyodide');
 type PyodideRuntime = Awaited<ReturnType<PyodideModule['loadPyodide']>>;
 
@@ -19,14 +21,14 @@ interface PythonWorkerGlobalScope {
 
 const workerScope = self as unknown as PythonWorkerGlobalScope;
 let runtime: PyodideRuntime | null = null;
-let pythonInputAdapter: ReturnType<NonNullable<typeof runtime>['runPython']> | null = null;
+let executePython: ((code: string, setInterrupts: (enabled: boolean) => void) => PromiseLike<string | undefined>) | null = null;
+const disabledInterruptBuffer = new Uint8Array(1);
 let inputControl: Int32Array | null = null;
 let inputData: Uint8Array | null = null;
 let interruptView: Int32Array | null = null;
 let inputOffset = 0;
 let inputLength = 0;
-let running = false;
-let stopRequested = false;
+let activeRunId: number | undefined;
 let taskQueue = Promise.resolve();
 let mypyReady = false;
 let mypyLoadError = '';
@@ -43,28 +45,24 @@ function send(message: Record<string, unknown>): void {
 }
 
 function readInput(target: Uint8Array): number {
-  if (!inputControl || !inputData) return 0;
-
-  while (Atomics.load(inputControl, 0) !== 1 && Atomics.load(inputControl, 0) !== 3) {
-    if (Atomics.load(inputControl, 0) !== 2) {
-      Atomics.store(inputControl, 0, 2);
-      send({ type: 'input-needed' });
-    }
-    Atomics.wait(inputControl, 0, 2, 1000);
+  if (!inputControl || !inputData || activeRunId === undefined) return 0;
+  if (Atomics.compareExchange(inputControl, inputSlot.state, inputState.idle, inputState.waiting) === inputState.idle) {
+    send({ type: 'input-needed', id: activeRunId });
   }
+  Atomics.wait(inputControl, inputSlot.state, inputState.waiting);
+  runtime?.checkInterrupt();
 
-  if (Atomics.load(inputControl, 0) === 3) return 0;
-  if (inputOffset === 0) inputLength = Atomics.load(inputControl, 1);
+  if (Atomics.load(inputControl, inputSlot.state) !== inputState.submitted) return 0;
+  if (inputOffset === 0) inputLength = Atomics.load(inputControl, inputSlot.length);
 
-  const count = Math.min(target.length, Math.max(0, inputLength - inputOffset));
+  const count = Math.min(target.length, inputLength - inputOffset);
   if (count) target.set(inputData.subarray(inputOffset, inputOffset + count));
   inputOffset += count;
-
   if (inputOffset >= inputLength) {
     inputOffset = 0;
     inputLength = 0;
-    Atomics.store(inputControl, 1, 0);
-    Atomics.store(inputControl, 0, 0);
+    Atomics.store(inputControl, inputSlot.length, 0);
+    Atomics.compareExchange(inputControl, inputSlot.state, inputState.submitted, inputState.idle);
   }
   return count;
 }
@@ -78,17 +76,32 @@ async function initialize(message: InitializeMessage): Promise<void> {
   const pyodideModuleUrl = new URL('/pyodide/pyodide.mjs', workerScope.location.href);
   const { loadPyodide } = await import(/* @vite-ignore */ pyodideModuleUrl.href) as PyodideModule;
   runtime = await loadPyodide({ indexURL: new URL('/pyodide/', workerScope.location.href).href });
-  runtime.setStdout({ batched: (text) => send({ type: 'output', channel: 'stdout', text }) });
-  runtime.setStderr({ batched: (text) => send({ type: 'output', channel: 'stderr', text }) });
+  runtime.setStdout({ batched: (text) => send({ type: 'output', id: activeRunId, channel: 'stdout', text }) });
+  runtime.setStderr({ batched: (text) => send({ type: 'output', id: activeRunId, channel: 'stderr', text }) });
   runtime.setStdin({ isatty: true, read: readInput });
-  runtime.runPython(`
+  executePython = runtime.runPython(`
 import builtins as _knote_builtins
+import traceback as _knote_traceback
+from pyodide.code import eval_code_async as _knote_eval_code
+
 def _knote_input(prompt=""):
     if prompt:
         print(prompt, flush=True)
     return _knote_builtins.input()
+
+async def _knote_execute(source, set_interrupts):
+    namespace = {"__name__": "__main__", "input": _knote_input}
+    try:
+        set_interrupts(True)
+        await _knote_eval_code(source, globals=namespace, filename="main.py", return_mode="none")
+    except BaseException:
+        return _knote_traceback.format_exc()
+    finally:
+        set_interrupts(False)
+
+_knote_execute
 `);
-  pythonInputAdapter = runtime.globals.get('_knote_input');
+
 
   const pythonVersion = runtime.runPython('import sys; sys.version.split()[0]') as string;
   send({ type: 'ready', version: pythonVersion, jediReady: false, mypyReady: false, mypyPending: true });
@@ -178,43 +191,33 @@ import pyflakes.reporter
 }
 
 async function runCode(message: RunMessage): Promise<void> {
-  if (!runtime) throw new Error('El runtime de Python todavía no está preparado.');
-  if (running) return;
-  running = true;
-  stopRequested = false;
+  if (!runtime || !inputControl || !interruptView || !executePython) throw new Error('El runtime de Python todavía no está preparado.');
+  const control = inputControl;
+  const stopped = () => Atomics.load(control, inputSlot.stopped) === 1;
+  if (stopped()) {
+    send({ type: 'run-stopped', id: message.id });
+    return;
+  }
+
+  const activeRuntime = runtime;
+  const signal = interruptView;
+  activeRunId = message.id;
   inputOffset = 0;
   inputLength = 0;
-  if (inputControl) {
-    Atomics.store(inputControl, 0, 0);
-    Atomics.store(inputControl, 1, 0);
-    Atomics.store(inputControl, 2, 0);
-  }
-  if (interruptView) {
-    Atomics.store(interruptView, 0, 0);
-    runtime.setInterruptBuffer(interruptView);
-  }
-  send({ type: 'run-started', id: message.id });
-
-  const globals = runtime.runPython('dict()');
+  let error: string | undefined;
   try {
-    globals.set('__name__', '__main__');
-    if (pythonInputAdapter) globals.set('input', pythonInputAdapter);
-    await runtime.runPythonAsync(message.code, { globals, filename: 'main.py' });
-    if (stopRequested || Atomics.load(inputControl!, 2) === 1) send({ type: 'run-stopped', id: message.id });
-    else send({ type: 'run-finished', id: message.id });
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    const interrupted = stopRequested || Atomics.load(inputControl!, 2) === 1 || /KeyboardInterrupt|Interrupted/i.test(detail);
-    if (interrupted) send({ type: 'run-stopped', id: message.id });
-    else send({ type: 'run-error', id: message.id, message: detail });
+    error = await executePython(message.code, (enabled) => {
+      activeRuntime.setInterruptBuffer(enabled ? signal : disabledInterruptBuffer);
+    });
+  } catch (failure) {
+    error = failure instanceof Error ? failure.message : String(failure);
   } finally {
-    globals.destroy();
-    running = false;
-    if (inputControl) {
-      Atomics.store(inputControl, 0, 0);
-      Atomics.store(inputControl, 1, 0);
-    }
+    activeRuntime.setInterruptBuffer(disabledInterruptBuffer);
+    activeRunId = undefined;
   }
+  if (stopped()) send({ type: 'run-stopped', id: message.id });
+  else if (typeof error === 'string') send({ type: 'run-error', id: message.id, message: error });
+  else send({ type: 'run-finished', id: message.id });
 }
 
 async function analyze(message: AnalyzeMessage): Promise<void> {
