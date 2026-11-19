@@ -551,8 +551,7 @@ textarea.knote-body-field::placeholder { color: var(--balsa-role-secondary) !imp
 }
 .knote-format-toolbar [data-balsa="button"][data-size="sm"][data-shape="fab"] { width: 2rem; height: 2rem; min-height: 2rem; }
 .knote-format-separator { height: 1.35rem !important; margin: 0 .12rem; border-color: var(--balsa-role-border) !important; }
-.knote-format-menu > button { min-height: 2rem; border-color: transparent; background: transparent; color: var(--balsa-role-foreground); font-size: .72rem; font-weight: 540; }
-.knote-format-menu > button:hover { border-color: color-mix(in oklab, var(--balsa-role-foreground) 10%, transparent); background: color-mix(in oklab, var(--balsa-role-foreground) 7%, transparent); }
+.knote-format-toolbar .knote-format-menu { min-height: 2rem; font-size: .72rem; }
 @keyframes knote-toolbar-enter { from { opacity: 0; transform: translateY(4px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
 
 .knote-folder-contents { margin-top: 1.8rem; }

@@ -290,36 +290,16 @@ button[id^="entry-icon-"][id$="-trigger"] .knote-icon-trigger { width: 1.35rem; 
   line-height: 1.14;
   letter-spacing: -.05em;
 }
-.knote-canvas--writing .knote-page-banner-empty {
-  justify-content: flex-start;
-  min-height: 0;
-  margin-bottom: .7rem;
+@media (hover: none) {
+  .knote-canvas--writing .knote-page-banner-empty > [data-balsa="attachment"] > label:nth-of-type(2) {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
-.knote-canvas--writing .knote-page-banner-empty > [data-balsa="attachment"] { width: auto; }
-.knote-canvas--writing .knote-page-banner-empty > [data-balsa="attachment"] > label:nth-of-type(2) {
-  opacity: 1;
-  pointer-events: auto;
-}
-.knote-document-controls {
-  display: flex;
-  align-items: center;
-  gap: .7rem;
-  padding-block: .45rem;
-  border-block: 1px solid var(--balsa-role-border);
-  margin-bottom: 1.25rem;
-}
-.knote-document-history { display: flex; gap: .2rem; margin-inline-start: auto; }
-.knote-document-shortcut,
 .knote-document-save-status {
   color: var(--balsa-role-muted-foreground);
   font-size: .76rem;
   line-height: 1.4;
-}
-.knote-document-shortcut kbd {
-  padding: .05rem .3rem;
-  border: 1px solid var(--balsa-role-border);
-  border-radius: .25rem;
-  color: var(--balsa-role-foreground);
 }
 .knote-document-save-status { display: inline-flex; align-items: center; gap: .45rem; white-space: nowrap; }
 .knote-document-save-status::before {
@@ -345,13 +325,11 @@ button[id^="entry-icon-"][id$="-trigger"] .knote-icon-trigger { width: 1.35rem; 
 
 @media (max-width: 680px) {
   .knote-canvas--writing { padding-block-start: 1.6rem; }
-  .knote-document-shortcut { display: none; }
   .knote-document-save-status { white-space: normal; max-width: 6rem; font-size: .68rem; }
   .knote-topbar--writing .knote-topbar-actions > .knote-topbar-copy-link { display: inline-flex; }
   .knote-topbar--writing .knote-topbar-left [data-balsa="breadcrumb"] ol > li:not(:last-child) { display: none; }
   .knote-topbar--writing .knote-topbar-left [data-balsa="breadcrumb"] ol > li:last-child::before { content: none; }
   .knote-topbar--writing .knote-topbar-left [data-balsa="breadcrumb"] ol > li:last-child > span { display: block; max-width: 100%; }
-  .knote-document-editor .knote-block-actions { transform: translateY(-100%); }
   .knote-block-editor .knote-preview-columns { grid-template-columns: 1fr; }
   .knote-block-editor .knote-preview-column { padding-block: .35rem; }
 }

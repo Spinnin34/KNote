@@ -30,6 +30,7 @@ const rawProps = withDefaults(
     shadow?: Shadow;
     hotkey?: string;
     contained?: boolean;
+    panel?: boolean;
     theme?: ThemeInput;
   }>(),
   {
@@ -151,7 +152,7 @@ onBeforeUnmount(() => {
         :placeholder="props.placeholder"
         :loading="props.loading"
         :open="model"
-        dropdown
+        :dropdown="!props.panel"
         :variant="props.variant"
         :rounded="props.rounded"
         :shadow="props.shadow"

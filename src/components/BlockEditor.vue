@@ -3,7 +3,7 @@ import { computed, createApp, nextTick, onBeforeUnmount, onMounted, ref, watch }
 import {
   ArrowDown, ArrowUp, Bold, ChevronDown, Code2, Columns3, Copy, GripVertical, Highlighter, Image as ImageIcon, Italic,
   Link2, List, ListOrdered, ListTodo, Minus, Plus, Quote, Sigma, Strikethrough, Table as TableIcon,
-  Redo2, Trash2, Type, Underline, Undo2, X,
+  Trash2, Type, Underline, X,
 } from '@lucide/vue';
 import Button from '@/components/ui/Button.vue';
 import CommandMenu from '@/components/ui/CommandMenu.vue';
@@ -20,7 +20,7 @@ import { blockFromListItem, convertListItemsToList, listItemContent, mergeAdjace
 import { captureDocumentSelection, createDocumentHistory, restoreDocumentSelection } from '@/components/block-editor/history';
 import { getBlockImage, retainBlockImage, saveBlockImage } from '@/lib/block-images';
 
-const props = defineProps<{ modelValue: string; pageId: string; placeholder?: string; documentControls?: boolean }>();
+const props = defineProps<{ modelValue: string; pageId: string; placeholder?: string }>();
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
 
 const editor = ref<HTMLElement | null>(null);
@@ -30,13 +30,14 @@ const linkDraft = ref('https://');
 const linkEditorOpen = ref(false);
 const selectionOpen = ref(false);
 const formatBlocksOpen = ref(false);
+const formatQuery = ref('');
+const formatTrigger = ref<HTMLElement | null>(null);
+const formatGroups = ref<readonly CommandGroup[]>([]);
+const formatPosition = ref<Record<string, string>>({});
 const toolbarPosition = ref({ left: '8px', top: '8px' });
-const slashMenuOpen = ref(false);
-const slashQuery = ref('');
-const slashMenuPosition = ref({ left: '0px', top: '0px' });
-const blockMenuOpen = ref(false);
-const blockMenuQuery = ref('');
-const blockMenuPosition = ref({ left: '0px', top: '0px' });
+const insertMenu = ref<{ anchor: HTMLElement; source: 'slash' | 'button' } | null>(null);
+const insertQuery = ref('');
+const insertPosition = ref<Record<string, string>>({});
 const hoveredBlock = ref<HTMLElement | null>(null);
 const blockActionsPosition = ref({ left: '0px', top: '0px' });
 const draggedBlock = ref<HTMLElement | null>(null);
@@ -62,6 +63,8 @@ const activeCodeBlock = ref<HTMLElement | null>(null);
 const codeToolbarPosition = ref({ left: '0px', top: '0px' });
 const codeLanguageMenuOpen = ref(false);
 const codeLanguageQuery = ref('');
+const codeLanguageTrigger = ref<HTMLElement | null>(null);
+const codeLanguagePosition = ref<Record<string, string>>({});
 const copiedCode = ref(false);
 const copyCodeUnavailable = ref(false);
 const activeCallout = ref<HTMLElement | null>(null);
@@ -84,10 +87,6 @@ let savedRange: Range | null = null;
 let savedSelectedBlocks: HTMLElement[] = [];
 let lastModelValue = props.modelValue;
 let history = createDocumentHistory(props.modelValue);
-const undoAvailable = ref(false);
-const redoAvailable = ref(false);
-const emptyDocument = ref(true);
-let slashState: { block: HTMLElement; query: string } | null = null;
 let composing = false;
 let renderingVersion = false;
 let selectionFrame = 0;
@@ -112,34 +111,6 @@ const codeLanguageGroups: readonly CommandGroup[] = [{
 }];
 const calloutIconItems: readonly MenuItem[] = CALL_OUT_ICONS.map((item) => ({ id: `callout-icon:${item.id}`, label: item.label, icon: item.icon }));
 
-const headingItems: readonly MenuItem[] = [1, 2, 3, 4].map((level) => ({
-  id: `block:heading${level}`, label: `Encabezado ${level}`, icon: Type,
-}));
-const listItems: readonly MenuItem[] = [
-  { id: 'block:bullet', label: 'Lista con viñetas', icon: List },
-  { id: 'block:numbered', label: 'Lista numerada', icon: ListOrdered },
-  { id: 'block:task', label: 'Lista de tareas', icon: ListTodo },
-  { id: 'block:toggle', label: 'Lista desplegable', icon: ChevronDown },
-];
-const columnItems: readonly MenuItem[] = [2, 3, 4, 5].map((count) => ({
-  id: `block:columns:${count}`, label: `${count} columnas`, icon: Columns3,
-}));
-const formatItems: readonly MenuItem[] = [
-  { id: 'block:paragraph', label: 'Texto', icon: Type },
-  { id: 'group:format-headings', type: 'submenu', label: 'Encabezados', icon: Type, children: headingItems },
-  { id: 'group:format-lists', type: 'submenu', label: 'Listas', icon: List, children: listItems },
-  { id: 'separator-format', type: 'separator' },
-  { id: 'block:quote', label: 'Cita', icon: Quote },
-  { id: 'block:callout-icon', label: 'Cita destacada con icono', icon: Quote },
-  { id: 'block:callout-plain', label: 'Cita destacada', icon: Quote },
-  { id: 'block:highlight', label: 'Destacado', icon: Highlighter },
-  { id: 'block:table', label: 'Tabla', icon: TableIcon },
-  { id: 'block:code', label: 'Bloque de código', icon: Code2 },
-  { id: 'block:divider', label: 'Divisor', icon: Minus },
-  { id: 'block:image', label: 'Imagen', icon: ImageIcon },
-  { id: 'block:equation', label: 'Ecuación en bloque', icon: Sigma },
-  { id: 'group:format-columns', type: 'submenu', label: 'Columnas', icon: Columns3, children: columnItems },
-];
 const slashBlockGroups: readonly CommandGroup[] = [{
   id: 'insert-text', label: 'Texto y listas', items: [
     { id: 'block:paragraph', label: 'Texto', keywords: ['párrafo', 'normal'], icon: Type },
@@ -309,6 +280,9 @@ function scheduleSelectionUpdate(): void {
   selectionFrame = requestAnimationFrame(() => {
     selectionFrame = 0;
     updateSelectionToolbar();
+    if (insertMenu.value?.anchor.isConnected) insertPosition.value = commandPosition(insertMenu.value.anchor);
+    if (formatBlocksOpen.value && formatTrigger.value) formatPosition.value = commandPosition(formatTrigger.value, 'end');
+    if (codeLanguageMenuOpen.value && codeLanguageTrigger.value) codeLanguagePosition.value = commandPosition(codeLanguageTrigger.value);
     if (hoveredBlock.value?.isConnected) blockActionsPosition.value = blockActionsAt(hoveredBlock.value);
     if (activeImage.value?.isConnected) imageResizePosition.value = imageResizeHandlesAt(activeImage.value);
   });
@@ -344,7 +318,6 @@ function hasMeaningfulContent(root: HTMLElement): boolean {
 }
 function updateEditorPlaceholder(root: HTMLElement): void {
   const isBlank = !hasMeaningfulContent(root);
-  emptyDocument.value = isBlank;
   root.dataset.blank = String(isBlank);
   Array.from(root.children).forEach((child) => child.removeAttribute('data-knote-editor-placeholder'));
   if (!isBlank) return;
@@ -434,25 +407,28 @@ function normalizeEditorDom(root: HTMLElement): void {
   }
 }
 function updateSelectionToolbar(): void {
+  if (formatBlocksOpen.value || linkEditorOpen.value || insertMenu.value || blockContextMenuOpen.value) return;
   const root = rootElement();
   const selection = window.getSelection();
   if (!root || !selection?.rangeCount) { selectionOpen.value = false; return; }
   const range = selection.getRangeAt(0);
-  if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return;
+  if (!root.contains(range.startContainer) || !root.contains(range.endContainer)
+    || (document.activeElement !== root && !toolbar.value?.contains(document.activeElement))) {
+    selectionOpen.value = false;
+    return;
+  }
   const selectedText = selection.toString();
   if (range.collapsed || !selectedText.trim()) {
-    if (!formatBlocksOpen.value && !linkEditorOpen.value) {
-      savedRange = range.cloneRange();
-      savedSelectedBlocks = [];
-    }
+    savedRange = range.cloneRange();
+    savedSelectedBlocks = [];
     selectionOpen.value = false;
-    linkEditorOpen.value = false;
     return;
   }
   savedRange = range.cloneRange();
   savedSelectedBlocks = resolveSelectedBlocks(root, range);
   const rects = Array.from(range.getClientRects()).filter((rect) => rect.width || rect.height);
   const rect = rects[rects.length - 1] || range.getBoundingClientRect();
+  if (rect.bottom < 48 || rect.top > window.innerHeight) { selectionOpen.value = false; return; }
   const viewportPadding = 8;
   const availableWidth = Math.max(0, window.innerWidth - viewportPadding * 2);
   const width = Math.min(toolbar.value?.offsetWidth || 342, availableWidth);
@@ -484,10 +460,6 @@ function updateSelectionToolbar(): void {
   };
   selectionOpen.value = true;
 }
-function updateHistoryControls(): void {
-  undoAvailable.value = history.canUndo();
-  redoAvailable.value = history.canRedo();
-}
 function emitDocument(normalize = true, group = ''): void {
   const root = rootElement();
   if (!root || composing || renderingVersion) return;
@@ -504,7 +476,6 @@ function emitDocument(normalize = true, group = ''): void {
   const value = RICH_PREFIX + html;
   if (value === lastModelValue) return;
   history.record(value, captureDocumentSelection(root), group);
-  updateHistoryControls();
   lastModelValue = value;
   emit('update:modelValue', value);
 }
@@ -543,7 +514,6 @@ function requestImageInsertion(anchor: HTMLElement | null): void {
   imageError.value = '';
   selectedImageFiles.value = [];
   imagePickerOpen.value = true;
-  blockMenuOpen.value = false;
   codeLanguageMenuOpen.value = false;
 }
 function insertImageFile(file: File): void {
@@ -701,7 +671,6 @@ function insertBlockAt(anchor: HTMLElement | null, id: string): void {
     else target.after(...(trailing ? [block, trailing] : [block]));
   } else root.append(...(trailing ? [block, trailing] : [block]));
   if (id === 'block:table') mountTableBlocks(root);
-  blockMenuOpen.value = false;
   insertionAnchor.value = null;
   const caretTarget = trailing || block;
   placeCaretAtEnd(caretTarget);
@@ -727,7 +696,7 @@ function blockActionsAt(block: HTMLElement): { left: string; right?: string; top
   const compactPlacement = window.innerWidth <= 680;
   const sideRailFits = !compactPlacement && bounds.left >= actionsWidth + 18;
   const left = sideRailFits ? -(actionsWidth + 10) : compactPlacement ? 0 : Math.max(0, rect.left - bounds.left);
-  const top = rect.top - bounds.top + (sideRailFits || compactPlacement ? offset : -actionsHeight - 8);
+  const top = rect.top - bounds.top + (sideRailFits ? offset : -actionsHeight - 6);
   return { left: `${left}px`, top: `${top}px` };
 }
 function handleBlockContextSelection(selection: MenuSelection): void {
@@ -743,8 +712,8 @@ function handleBlockContextSelection(selection: MenuSelection): void {
     const copy = template.content.firstElementChild as HTMLElement | null;
     if (!copy) return;
     block.after(copy);
-    showBlockActions(copy);
-    emitDocument();
+    if (copy.matches('.knote-table-block')) mountTableBlocks(root);
+    finishBlockAction(copy);
     void hydrateImageAssets(root);
   }
 }
@@ -776,35 +745,73 @@ function deleteContextTargetBlock(): void {
       return paragraph;
     })();
   contextTargetBlock.value = null;
-  hoveredBlock.value = focusTarget;
-  blockActionsPosition.value = blockActionsAt(focusTarget);
-  placeCaretAtEnd(focusTarget);
-  emitDocument();
-  scheduleSelectionUpdate();
+  finishBlockAction(focusTarget);
 }
-function openBlockMenu(event: MouseEvent): void {
-  const trigger = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
-  const block = hoveredBlock.value ?? editor.value?.lastElementChild as HTMLElement | null;
-  if (!block) return;
-  if (slashState) cancelSlashMenu(false);
-  insertionAnchor.value = block;
-  const rect = (trigger?.closest('.knote-document-controls') ? trigger : block).getBoundingClientRect();
-  const bounds = shell.value?.getBoundingClientRect();
-  const width = shell.value?.clientWidth || 320;
-  blockMenuPosition.value = menuPosition(rect, bounds, width);
-  blockMenuQuery.value = '';
-  blockMenuOpen.value = true;
-  void nextTick(() => shell.value?.querySelector<HTMLElement>('.knote-block-insert-menu [data-balsa="command-menu"] input')?.focus({ preventScroll: true }));
+function commandPosition(anchor: HTMLElement, align: 'start' | 'end' = 'start'): Record<string, string> {
+  const rect = anchor.getBoundingClientRect();
+  const viewport = window.visualViewport;
+  const viewportTop = viewport?.offsetTop ?? 0;
+  const viewportHeight = viewport?.height ?? window.innerHeight;
+  const viewportBottom = viewportTop + viewportHeight;
+  const viewportLeft = viewport?.offsetLeft ?? 0;
+  const viewportWidth = viewport?.width ?? document.documentElement.clientWidth;
+  const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
+  const width = Math.max(0, Math.min(20 * rem, viewportWidth - 16));
+  const left = align === 'end' ? rect.right - width : rect.left;
+  const gap = 6;
+  const below = viewportBottom - rect.bottom - gap - 8;
+  const above = rect.top - viewportTop - gap - 8;
+  const searchHeight = 2.5 * rem + 2;
+  const listHeight = Math.min(18 * rem, viewportHeight * .45);
+  const showAbove = below < searchHeight + listHeight && above > below;
+  return {
+    left: `${Math.max(viewportLeft + 8, Math.min(left, viewportLeft + viewportWidth - width - 8))}px`,
+    width: `${width}px`,
+    ...(showAbove
+      ? { bottom: `${window.innerHeight - Math.min(rect.top - gap, viewportBottom - 8)}px` }
+      : { top: `${Math.max(rect.bottom + gap, viewportTop + 8)}px` }),
+    '--knote-command-list-height': `${Math.max(0, Math.min(listHeight, (showAbove ? above : below) - searchHeight))}px`,
+  };
 }
-function menuPosition(rect: DOMRect, bounds: DOMRect | undefined, width: number): { left: string; top: string } {
-  const menuHeight = Math.min(360, window.innerHeight * .55);
-  const showAbove = window.innerHeight - rect.bottom < menuHeight && rect.top > menuHeight;
-  const left = Math.max(4, Math.min(width - Math.min(320, width - 8) - 4, rect.left - (bounds?.left ?? 0)));
-  const top = (showAbove ? rect.top - menuHeight : rect.bottom) - (bounds?.top ?? 0) + 5;
-  return { left: `${left}px`, top: `${top}px` };
+function focusCommand(selector: string): void {
+  void nextTick(() => shell.value?.querySelector<HTMLInputElement>(`${selector} [role="combobox"]`)?.focus({ preventScroll: true }));
+}
+function showInsertMenu(anchor: HTMLElement, source: 'slash' | 'button', query = ''): void {
+  selectionOpen.value = false;
+  linkEditorOpen.value = false;
+  blockContextMenuOpen.value = false;
+  clearActiveComponentSettings();
+  insertMenu.value = { anchor, source };
+  insertQuery.value = query;
+  insertPosition.value = commandPosition(anchor);
+  focusCommand('.knote-block-insert-menu');
+}
+function openBlockMenu(): void {
+  if (insertMenu.value?.source === 'button') { closeInsertMenu(true); return; }
+  const block = hoveredBlock.value;
+  closeInsertMenu();
+  if (block && editor.value?.contains(block)) showInsertMenu(block, 'button');
 }
 function handleBlockMenuSelection(item: CommandItem): void {
-  if (item.id.startsWith('block:')) insertBlockAt(insertionAnchor.value, item.id);
+  const menu = insertMenu.value;
+  if (!menu || !item.id.startsWith('block:')) return;
+  insertMenu.value = null;
+  insertQuery.value = '';
+  insertBlockAt(menu.anchor, item.id);
+}
+function closeInsertMenu(restoreFocus = false): void {
+  const menu = insertMenu.value;
+  if (!menu) return;
+  const query = insertQuery.value;
+  insertMenu.value = null;
+  insertQuery.value = '';
+  if (!editor.value?.contains(menu.anchor)) return;
+  if (menu.source === 'slash') {
+    menu.anchor.textContent = '/' + query;
+    emitDocument();
+  }
+  if (restoreFocus) placeCaretAtEnd(menu.anchor);
+  scheduleSelectionUpdate();
 }
 function updateCalloutColor(color: string): void {
   const callout = activeCallout.value;
@@ -972,8 +979,9 @@ function handleEditorPointerOver(event: PointerEvent): void {
 }
 const calloutToolsPosition = ref({ left: '0px', top: '0px' });
 function handleEditorPointerLeave(event: PointerEvent): void {
+  if (event.pointerType === 'touch') return;
   const relatedTarget = event.relatedTarget;
-  if (blockContextMenuOpen.value || blockMenuOpen.value || imagePickerOpen.value || codeLanguageMenuOpen.value || calloutToolsPinned.value || imageToolsPinned.value) return;
+  if (blockContextMenuOpen.value || insertMenu.value || imagePickerOpen.value || codeLanguageMenuOpen.value || calloutToolsPinned.value || imageToolsPinned.value) return;
   if (relatedTarget instanceof Node && shell.value?.contains(relatedTarget)) return;
   if (relatedTarget instanceof Element && relatedTarget.closest('.knote-editor-control, [data-balsa="menu-list"]')) return;
   if (editorHitAreaContains(event.clientX)) {
@@ -985,7 +993,7 @@ function handleEditorPointerLeave(event: PointerEvent): void {
 function handleEditorPointerMove(event: PointerEvent): void {
   if (event.pointerType === 'touch') return;
   const target = event.target;
-  if (target instanceof Element && (target.closest('.knote-editor-control, [data-balsa="menu-list"]') || blockContextMenuOpen.value || blockMenuOpen.value)) return;
+  if (target instanceof Element && (target.closest('.knote-editor-control, [data-balsa="menu-list"]') || blockContextMenuOpen.value || insertMenu.value)) return;
   if (editorHitAreaContains(event.clientX)) {
     const root = editor.value;
     const block = target instanceof Element && root?.contains(target)
@@ -993,7 +1001,7 @@ function handleEditorPointerMove(event: PointerEvent): void {
       : nearestBlockAtY(event.clientY);
     if (block) { showBlockActions(block); return; }
   }
-  if (editor.value !== document.activeElement && !blockContextMenuOpen.value && !blockMenuOpen.value) hoveredBlock.value = null;
+  if (editor.value !== document.activeElement) hoveredBlock.value = null;
 }
 function beginBlockPointerDrag(event: PointerEvent): void {
   if (!event.isPrimary || event.button !== 0 || !hoveredBlock.value) return;
@@ -1143,15 +1151,13 @@ function handleBlockPointerUp(event: PointerEvent): void {
   if (!state || event.pointerId !== state.pointerId) return;
   const cancelled = event.type === 'pointercancel';
   const dragged = draggedBlock.value;
+  let moved = false;
   if (dragged) suppressBlockClickUntil = performance.now() + 350;
   if (!cancelled && dragged && editorHitAreaContains(event.clientX)) {
     const target = dropTargetAtPointer(event.clientX, event.clientY);
     if (target && canDropBlock(dragged, target)) {
       updateDropPlaceholder(target, event.clientY);
-      if (dropAnchorTarget && commitDropPlaceholder(dragged)) {
-        emitDocument();
-        scheduleSelectionUpdate();
-      }
+      moved = Boolean(dropAnchorTarget && commitDropPlaceholder(dragged));
     }
   }
   blockPointerDrag = null;
@@ -1159,6 +1165,7 @@ function handleBlockPointerUp(event: PointerEvent): void {
   document.removeEventListener('pointerup', handleBlockPointerUp);
   document.removeEventListener('pointercancel', handleBlockPointerUp);
   finishBlockDrag();
+  if (dragged && moved) finishBlockAction(dragged);
 }
 function handleEditorDragOver(event: DragEvent): void {
   if (Array.from(event.dataTransfer?.files ?? []).some((file) => file.type.startsWith('image/'))) {
@@ -1197,8 +1204,13 @@ function handleEditorDrop(event: DragEvent): void {
   if (!dragged || !target || !canDropBlock(dragged, target)) { finishBlockDrag(); return; }
   event.preventDefault();
   updateDropPlaceholder(target, event.clientY);
-  commitDropPlaceholder(dragged);
+  const moved = commitDropPlaceholder(dragged);
   finishBlockDrag();
+  if (moved) finishBlockAction(dragged);
+}
+function finishBlockAction(block: HTMLElement): void {
+  hoveredBlock.value = block;
+  placeCaretAtEnd(block);
   emitDocument();
   scheduleSelectionUpdate();
 }
@@ -1207,10 +1219,7 @@ function moveBlockByKeyboard(direction: -1 | 1, block = hoveredBlock.value): voi
   const neighbor = direction < 0 ? block.previousElementSibling : block.nextElementSibling;
   if (!neighbor) return;
   if (direction < 0) neighbor.before(block); else neighbor.after(block);
-  hoveredBlock.value = block;
-  blockActionsPosition.value = blockActionsAt(block);
-  emitDocument();
-  scheduleSelectionUpdate();
+  finishBlockAction(block);
 }
 function handleBlockHandlePointerDown(event: PointerEvent): void {
   suppressBlockClickUntil = 0;
@@ -1240,9 +1249,20 @@ async function copyCode(): Promise<void> {
 function handleCodeLanguageSelection(item: CommandItem): void {
   if (!activeCodeBlock.value || !LANGUAGE_IDS.has(item.id)) return;
   activeCodeBlock.value.dataset.language = item.id;
-  codeLanguageMenuOpen.value = false;
-  codeLanguageQuery.value = '';
+  closeCodeLanguageMenu(true);
   emitDocument();
+}
+function toggleCodeLanguageMenu(event: MouseEvent): void {
+  if (codeLanguageMenuOpen.value) { closeCodeLanguageMenu(true); return; }
+  if (!(event.currentTarget instanceof HTMLElement)) return;
+  codeLanguageTrigger.value = event.currentTarget;
+  codeLanguagePosition.value = commandPosition(event.currentTarget);
+  codeLanguageMenuOpen.value = true;
+  focusCommand('.knote-code-language-menu');
+}
+function closeCodeLanguageMenu(restoreFocus = false): void {
+  codeLanguageMenuOpen.value = false;
+  if (restoreFocus) codeLanguageTrigger.value?.focus({ preventScroll: true });
 }
 function languageLabel(block: HTMLElement | null): string {
   const id = safeLanguage(block?.dataset.language || null);
@@ -1282,6 +1302,7 @@ function wrapSelected(tag: string, attributes: Record<string, string> = {}): voi
   if (!range || range.collapsed) return;
   const root = rootElement();
   if (!root) return;
+  history.remember(captureDocumentSelection(root));
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const segments: { node: Text; start: number; end: number }[] = [];
   while (walker.nextNode()) {
@@ -1345,6 +1366,7 @@ function unwrapSelectedFormatting(range: Range): void {
   savedRange = range.cloneRange();
 }
 function applyInline(command: 'bold' | 'italic' | 'underline' | 'strikeThrough' | 'removeFormat' | 'hiliteColor' | 'insertHTML', value?: string): void {
+  closeFormatMenu();
   const range = restoreSelection();
   if (!range || range.startContainer.parentElement?.closest('pre')) return;
   if (command === 'insertHTML') wrapSelected('code');
@@ -1389,6 +1411,7 @@ function applyLink(): void {
   scheduleSelectionUpdate();
 }
 function startLinkEdit(): void {
+  closeFormatMenu();
   const selection = window.getSelection();
   const anchor = selection?.anchorNode instanceof Element
     ? selection.anchorNode.closest('a')
@@ -1396,6 +1419,11 @@ function startLinkEdit(): void {
   linkDraft.value = anchor?.getAttribute('href') || 'https://';
   linkEditorOpen.value = true;
   void nextTick(() => document.getElementById(`block-link-${props.pageId}`)?.focus());
+}
+function cancelLinkEdit(): void {
+  linkEditorOpen.value = false;
+  restoreSelection();
+  scheduleSelectionUpdate();
 }
 
 function placeCaretAtEnd(target: HTMLElement | null, atStart = false): void {
@@ -1405,7 +1433,15 @@ function placeCaretAtEnd(target: HTMLElement | null, atStart = false): void {
   let block = target && root.contains(target) ? target : root.lastElementChild as HTMLElement | null;
   if (!block) return;
   if (block.matches('.knote-table-block')) {
-    block.querySelector<HTMLElement>('[data-table-row]')?.focus({ preventScroll: true });
+    const cell = block.querySelector<HTMLElement>('[data-table-row="0"][data-table-column="0"]');
+    cell?.focus({ preventScroll: true });
+    if (cell) {
+      const range = document.createRange();
+      range.selectNodeContents(cell);
+      range.collapse(atStart);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
     return;
   }
   if (block instanceof HTMLDetailsElement) block = block.querySelector('summary') ?? block;
@@ -1414,6 +1450,7 @@ function placeCaretAtEnd(target: HTMLElement | null, atStart = false): void {
   if (block.matches('.knote-callout')) block = block.querySelector('p') ?? block;
   if (block.matches('pre')) block = block.querySelector('code') ?? block;
   if (block.matches('figure')) block = block.querySelector('figcaption') ?? block;
+  if (block.matches('p:has(> mark:only-child)') && !hasVisibleEditorText(block.textContent)) block = block.firstElementChild as HTMLElement;
   const range = document.createRange();
   range.selectNodeContents(block);
   const nestedList = block.querySelector(':scope > :is(ul, ol)');
@@ -1439,33 +1476,73 @@ function focusEnd(): void {
 
 defineExpose({ focusEnd });
 
-function applyBlock(id: string): void {
-  if (id === 'block:highlight' && savedRange && !savedRange.collapsed) { wrapSelected('mark'); return; }
-  const targets = getSelectedBlocks();
-  if (!targets.length) return;
-  if (id === 'block:image') { requestImageInsertion(targets[0]); return; }
-  if (targets.some((target) => target.matches('figure, .knote-table-block, .knote-preview-columns, details, hr'))) return;
-  if (targets.some((target) => target.matches('ul, ol')) && !['block:paragraph', 'block:bullet', 'block:numbered', 'block:task', 'block:table'].includes(id)) return;
-  if (id === 'block:table') {
-    if (targets.length === 1 && targets[0].classList.contains('knote-table-block')) return;
-    const rows = targets.flatMap((target) => {
-      const items = ['UL', 'OL'].includes(target.tagName) ? Array.from(target.querySelectorAll(':scope > li')) : [target];
-      return items.map((item) => [item.textContent || '', '', '']);
-    });
-    if (rows.length > TABLE_LIMITS.rows || rows.some(([value]) => value.length > TABLE_LIMITS.cell)) {
-      insertBlockAt(targets[targets.length - 1], 'block:table');
-      return;
-    }
-    const tableBlock = createBlock('block:table');
-    tableBlock.dataset.knoteTable = JSON.stringify(normalizeTableData({ ...EMPTY_TABLE, rows: rows.length ? rows : EMPTY_TABLE.rows }));
-    targets[0].before(tableBlock);
-    targets.forEach((target) => target.remove());
-    mountTableBlocks(rootElement()!);
-    placeCaretAtEnd(tableBlock);
-    emitDocument();
-    scheduleSelectionUpdate();
+function canApplyBlock(id: string, targets: readonly HTMLElement[]): boolean {
+  if (['block:image', 'block:divider', 'block:highlight'].includes(id)) return true;
+  if (targets.some((target) => target.matches('figure, .knote-table-block, .knote-preview-columns, details, hr'))) return false;
+  return !targets.some((target) => target.matches('ul, ol'))
+    || ['block:paragraph', 'block:bullet', 'block:numbered', 'block:task', 'block:table'].includes(id);
+}
+function convertBlocksToTable(targets: HTMLElement[]): void {
+  const items = targets.flatMap((target) => target.matches('ul, ol')
+    ? Array.from(target.querySelectorAll<HTMLLIElement>(':scope > li'))
+    : [target]);
+  const nestedLists: HTMLElement[] = [];
+  const rows = items.map((item) => {
+    if (!(item instanceof HTMLLIElement)) return [item.innerText, '', ''];
+    const { content, nestedLists: nested } = listItemContent(item);
+    nestedLists.push(...nested);
+    return [content.map((node) => node.nodeName === 'BR' ? '\n' : node.textContent ?? '').join(''), '', ''];
+  });
+  if (rows.length > TABLE_LIMITS.rows || rows.some(([value]) => value.length > TABLE_LIMITS.cell)) {
+    insertBlockAt(targets[targets.length - 1], 'block:table');
     return;
   }
+  const tableBlock = createBlock('block:table');
+  tableBlock.dataset.knoteTable = JSON.stringify(normalizeTableData({ ...EMPTY_TABLE, rows }));
+  const replacement = [tableBlock, ...nestedLists];
+  if (targets.every((target): target is HTMLLIElement => target instanceof HTMLLIElement)) {
+    if (!replaceSelectedListItems(targets, () => replacement)) return;
+  } else {
+    targets[0].before(...replacement);
+    targets.forEach((target) => target.remove());
+  }
+  emitDocument();
+  placeCaretAtEnd(tableBlock);
+  scheduleSelectionUpdate();
+}
+function textLinesFromWrapper(wrapper: HTMLElement): HTMLElement[] {
+  const lines: HTMLElement[] = [];
+  let inlineLine: HTMLParagraphElement | null = null;
+  for (const node of Array.from(wrapper.childNodes)) {
+    if (node instanceof HTMLElement && node.matches('.knote-callout-icon')) continue;
+    if (node instanceof HTMLElement && !node.matches(inlineEditorNode)) {
+      lines.push(node);
+      inlineLine = null;
+    } else {
+      if (!inlineLine) {
+        inlineLine = document.createElement('p');
+        lines.push(inlineLine);
+      }
+      inlineLine.append(node);
+    }
+  }
+  return lines.length ? lines : [blankElement('p')];
+}
+function changeTextBlockTag(block: HTMLElement, tag: string): HTMLElement {
+  if (!block.matches('blockquote, .knote-callout')) return replaceTag(block, tag);
+  const lines = textLinesFromWrapper(block).map((line) => line.matches('p, h1, h2, h3, h4') ? replaceTag(line, tag) : line);
+  block.replaceWith(...lines);
+  return lines[0];
+}
+function applyBlock(id: string): void {
+  const root = rootElement();
+  if (!root) return;
+  if (id === 'block:highlight' && savedRange && !savedRange.collapsed) { wrapSelected('mark'); return; }
+  const targets = getSelectedBlocks();
+  if (!targets.length || !canApplyBlock(id, targets)) return;
+  history.remember(captureDocumentSelection(root));
+  if (id === 'block:image') { requestImageInsertion(targets[0]); return; }
+  if (id === 'block:table') { convertBlocksToTable(targets); return; }
   let focusTarget: HTMLElement | null = null;
   const heading = /^block:heading([1-4])$/.exec(id);
   const listItems = targets.filter((target): target is HTMLLIElement => target instanceof HTMLLIElement);
@@ -1498,8 +1575,8 @@ function applyBlock(id: string): void {
   }
   if (id === 'block:paragraph') {
     targets.forEach((node) => {
-      if (/^H[1-4]$/.test(node.tagName) || node.tagName === 'BLOCKQUOTE') {
-        const paragraph = replaceTag(node, 'p');
+      if (node.matches('h1, h2, h3, h4, blockquote, .knote-callout')) {
+        const paragraph = changeTextBlockTag(node, 'p');
         focusTarget ??= paragraph;
       } else if (node.tagName === 'UL' || node.tagName === 'OL') {
         const paragraphs = Array.from(node.querySelectorAll<HTMLLIElement>(':scope > li'))
@@ -1507,7 +1584,7 @@ function applyBlock(id: string): void {
         if (!paragraphs.length) paragraphs.push(blankElement('p'));
         node.replaceWith(...paragraphs);
         focusTarget ??= paragraphs[0];
-      } else if (node.tagName === 'PRE' || node.tagName === 'DETAILS') {
+      } else if (node.matches('pre, .knote-equation')) {
         const paragraph = document.createElement('p');
         paragraph.textContent = node.innerText;
         node.replaceWith(paragraph);
@@ -1517,7 +1594,7 @@ function applyBlock(id: string): void {
       }
     });
   } else if (heading) {
-    targets.forEach((node) => { const block = replaceTag(node, `h${heading[1]}`); focusTarget ??= block; });
+    targets.forEach((node) => { const block = changeTextBlockTag(node, `h${heading[1]}`); focusTarget ??= block; });
   } else if (id === 'block:bullet' || id === 'block:numbered' || id === 'block:task') {
     const groups = new Map<Node, HTMLElement[]>();
     targets.forEach((node) => {
@@ -1533,7 +1610,9 @@ function applyBlock(id: string): void {
         const sourceItems = ['UL', 'OL'].includes(node.tagName) ? Array.from(node.querySelectorAll(':scope > li')) as HTMLElement[] : [node];
         sourceItems.forEach((source) => {
           const item = document.createElement('li');
-          const content = source.tagName === 'LI' ? Array.from(source.childNodes).filter((child) => !(child instanceof HTMLInputElement)) : Array.from(source.childNodes);
+          const content = source.matches('blockquote, .knote-callout')
+            ? textLinesFromWrapper(source)
+            : Array.from(source.childNodes).filter((child) => !(child instanceof HTMLInputElement));
           if (id === 'block:task') {
             const checked = source.querySelector<HTMLInputElement>(':scope > input[type="checkbox"]')?.checked ?? false;
             item.dataset.task = String(checked);
@@ -1550,7 +1629,7 @@ function applyBlock(id: string): void {
   } else if (id === 'block:quote') {
     targets.forEach((node) => {
       const quote = document.createElement('blockquote');
-      quote.innerHTML = node.innerHTML;
+      quote.append(...(node.matches('.knote-callout') ? textLinesFromWrapper(node) : Array.from(node.childNodes)));
       node.replaceWith(quote);
       focusTarget ??= quote;
     });
@@ -1558,7 +1637,15 @@ function applyBlock(id: string): void {
     targets.forEach((node) => {
       const callout = createBlock(id);
       const body = callout.querySelector('p');
-      if (body) body.innerHTML = node.innerHTML;
+      const lines = node.matches('blockquote, .knote-callout') ? textLinesFromWrapper(node) : [node];
+      for (const line of lines) {
+        if (line.matches('p, h1, h2, h3, h4, pre, .knote-equation') && body) {
+          if (line !== lines[0]) body.append(document.createElement('br'));
+          if (line === lines[0]) body.replaceChildren();
+          if (line.matches('pre, .knote-equation')) body.append(line.innerText);
+          else body.append(...line.childNodes);
+        } else callout.append(line);
+      }
       node.replaceWith(callout);
       focusTarget ??= callout;
     });
@@ -1610,13 +1697,40 @@ function replaceTag(node: HTMLElement, tag: string): HTMLElement {
   node.replaceWith(replacement);
   return replacement;
 }
-function handleFormatSelection(item: MenuSelection): void {
-  if (item.id.startsWith('block:')) applyBlock(item.id);
+function toggleFormatMenu(event: MouseEvent): void {
+  if (formatBlocksOpen.value) { closeFormatMenu(true); return; }
+  if (!(event.currentTarget instanceof HTMLElement)) return;
+  const targets = savedSelectedBlocks;
+  formatGroups.value = slashBlockGroups.map((group) => ({
+    ...group,
+    items: group.items.filter((item) => canApplyBlock(item.id, targets)),
+  }));
+  formatTrigger.value = event.currentTarget;
+  formatPosition.value = commandPosition(event.currentTarget, 'end');
+  formatBlocksOpen.value = true;
+  focusCommand('.knote-selection-format-menu');
+}
+function closeFormatMenu(restoreFocus = false): void {
+  if (!formatBlocksOpen.value) return;
+  formatBlocksOpen.value = false;
+  formatQuery.value = '';
+  if (restoreFocus) restoreSelection();
+  scheduleSelectionUpdate();
+}
+function handleFormatSelection(item: CommandItem): void {
+  closeFormatMenu();
+  applyBlock(item.id);
+}
+function handleCommandEscape(event: KeyboardEvent, close: () => void): void {
+  if (event.isComposing) return;
+  event.preventDefault();
+  event.stopPropagation();
+  close();
 }
 function openSlashMenuFromCaret(): boolean {
   const root = rootElement();
   const selection = window.getSelection();
-  if (!root || !selection?.rangeCount || slashMenuOpen.value) return false;
+  if (!root || !selection?.rangeCount || insertMenu.value) return false;
   const range = selection.getRangeAt(0);
   if (!range.collapsed || !root.contains(range.startContainer)) return false;
   const block = textBlockAt(range.startContainer);
@@ -1641,33 +1755,8 @@ function openSlashMenuFromCaret(): boolean {
   caret.collapse(true);
   savedRange = caret.cloneRange();
 
-  const shell = root.parentElement;
-  const shellRect = shell?.getBoundingClientRect();
-  if (shellRect) slashMenuPosition.value = menuPosition(block.getBoundingClientRect(), shellRect, shellRect.width);
-  slashState = { block, query: match[1] || '' };
-  blockMenuOpen.value = false;
-  slashQuery.value = match[1] || '';
-  slashMenuOpen.value = true;
-  void nextTick(() => shell?.querySelector<HTMLInputElement>('[data-balsa="command-menu"] input')?.focus({ preventScroll: true }));
+  showInsertMenu(block, 'slash', match[1]);
   return true;
-}
-function handleSlashBlockSelection(item: CommandItem): void {
-  if (!item.id.startsWith('block:') || !slashState) return;
-  const { block } = slashState;
-  slashState = null;
-  slashMenuOpen.value = false;
-  insertBlockAt(block, item.id);
-}
-function cancelSlashMenu(restoreFocus = true): void {
-  const state = slashState;
-  slashState = null;
-  slashMenuOpen.value = false;
-  const query = slashQuery.value || state?.query || '';
-  slashQuery.value = '';
-  if (!state || !editor.value?.contains(state.block)) return;
-  state.block.textContent = '/' + query;
-  if (restoreFocus) placeCaretAtEnd(state.block);
-  emitDocument();
 }
 function applyTypedBlockShortcut(): boolean {
   const root = rootElement();
@@ -1831,7 +1920,6 @@ function handleEditorKeydown(event: KeyboardEvent): void {
     if (!block) return;
     event.preventDefault();
     moveBlockByKeyboard(event.key === 'ArrowUp' ? -1 : 1, block);
-    placeCaretAtEnd(block);
     return;
   }
   if (event.key === 'Backspace') {
@@ -1947,7 +2035,7 @@ function handleEditorKeydown(event: KeyboardEvent): void {
         tailRange.selectNodeContents(item);
         tailRange.setStart(range.startContainer, range.startOffset);
         const tail = tailRange.extractContents();
-        tail.querySelectorAll('input[type="checkbox"]').forEach((input) => input.remove());
+        Array.from(tail.children).filter((child) => child.matches('input[type="checkbox"]')).forEach((input) => input.remove());
         const nextItem = document.createElement('li');
         if (task) {
           nextItem.dataset.task = 'false';
@@ -2075,7 +2163,6 @@ function changeVersion(direction: 'undo' | 'redo'): void {
   if (version.selection) restoreDocumentSelection(root, version.selection);
   else focusEnd();
   rememberSelection();
-  updateHistoryControls();
   emit('update:modelValue', version.value);
 }
 function handlePaste(event: ClipboardEvent): void {
@@ -2149,6 +2236,7 @@ function handlePaste(event: ClipboardEvent): void {
 function handleEditorClick(event: MouseEvent): void {
   const target = event.target;
   if (!(target instanceof HTMLElement)) return;
+  updateHoveredBlockFromSelection();
   const checkbox = target instanceof HTMLInputElement && target.type === 'checkbox' ? target : null;
   if (checkbox) {
     const item = checkbox.closest('li');
@@ -2176,9 +2264,12 @@ function handleImageRejected(rejections: readonly { message: string }[]): void {
 function handleOutsidePointerDown(event: PointerEvent): void {
   const target = event.target;
   if (!(target instanceof Element)) return;
+  if (!target.closest('.knote-block-insert-menu, .knote-block-actions')) closeInsertMenu();
+  if (!target.closest('.knote-selection-format-menu, .knote-format-toolbar')) closeFormatMenu();
+  if (!target.closest('.knote-link-editor, .knote-format-toolbar')) linkEditorOpen.value = false;
   if (target.closest('[data-balsa="menu-list"], [data-balsa="popup-panel"], .knote-format-toolbar, .knote-link-editor, .knote-editor-control')) return;
-  if (slashState) cancelSlashMenu(false);
-  blockMenuOpen.value = false;
+  selectionOpen.value = false;
+  linkEditorOpen.value = false;
   if (imagePickerOpen.value) cancelImageInsertion();
   if (shell.value?.contains(target)) {
     const isActiveComponent = activeCodeBlock.value?.contains(target)
@@ -2187,8 +2278,6 @@ function handleOutsidePointerDown(event: PointerEvent): void {
     if (!isActiveComponent) clearActiveComponentSettings();
     return;
   }
-  selectionOpen.value = false;
-  linkEditorOpen.value = false;
   codeLanguageMenuOpen.value = false;
   calloutIconMenuOpen.value = false;
   clearActiveComponentSettings();
@@ -2201,13 +2290,13 @@ function renderDocument(root: HTMLElement, value: string): void {
     savedRange = null;
     savedSelectedBlocks = [];
     hoveredBlock.value = null;
-    slashState = null;
-    slashMenuOpen.value = false;
-    blockMenuOpen.value = false;
+    insertMenu.value = null;
+    insertQuery.value = '';
     blockContextMenuOpen.value = false;
     selectionOpen.value = false;
     linkEditorOpen.value = false;
     formatBlocksOpen.value = false;
+    formatQuery.value = '';
     cancelImageInsertion();
     clearActiveComponentSettings();
     unmountTableBlocks();
@@ -2224,15 +2313,12 @@ watch(() => [props.pageId, props.modelValue] as const, ([id, value], [previousId
   if (id === previousId && value === lastModelValue) return;
   lastModelValue = value;
   history = createDocumentHistory(value);
-  updateHistoryControls();
   if (editor.value) renderDocument(editor.value, value);
 });
 watch(() => props.placeholder, () => {
   if (editor.value) updateEditorPlaceholder(editor.value);
 });
 watch(blockContextMenuOpen, (open) => { if (!open) contextTargetBlock.value = null; });
-watch(slashMenuOpen, (open) => { if (!open) slashQuery.value = ''; });
-watch(blockMenuOpen, (open) => { if (!open) blockMenuQuery.value = ''; });
 watch(codeLanguageMenuOpen, (open) => { if (!open) codeLanguageQuery.value = ''; });
 watch(selectionOpen, (open) => {
   if (open) void nextTick(updateSelectionToolbar);
@@ -2244,10 +2330,14 @@ onMounted(() => {
   document.addEventListener('pointermove', handleEditorPointerMove, { passive: true });
   window.addEventListener('scroll', scheduleSelectionUpdate, { passive: true, capture: true });
   window.addEventListener('resize', scheduleSelectionUpdate, { passive: true });
+  window.visualViewport?.addEventListener('resize', scheduleSelectionUpdate);
+  window.visualViewport?.addEventListener('scroll', scheduleSelectionUpdate);
 });
 onBeforeUnmount(() => {
   document.removeEventListener('selectionchange', scheduleSelectionUpdate);
   document.removeEventListener('pointerdown', handleOutsidePointerDown);
+  window.visualViewport?.removeEventListener('resize', scheduleSelectionUpdate);
+  window.visualViewport?.removeEventListener('scroll', scheduleSelectionUpdate);
   document.removeEventListener('pointermove', handleEditorPointerMove);
   document.removeEventListener('pointermove', handleBlockPointerMove);
   document.removeEventListener('pointerup', handleBlockPointerUp);
@@ -2283,14 +2373,6 @@ onBeforeUnmount(() => {
     @dragover="handleEditorDragOver"
     @drop="handleEditorDrop"
   >
-    <div v-if="documentControls" class="knote-document-controls knote-editor-control" role="group" aria-label="Edición del documento">
-      <Button variant="soft" color="neutral" size="sm" :prefix-icon="Plus" @click="openBlockMenu">Añadir bloque</Button>
-      <span v-if="emptyDocument" class="knote-document-shortcut">Escribe <kbd>/</kbd> para insertar</span>
-      <div class="knote-document-history">
-        <Button variant="soft" color="neutral" size="sm" :prefix-icon="Undo2" aria-label="Deshacer" title="Deshacer" :disabled="!undoAvailable" @click="changeVersion('undo')" />
-        <Button variant="soft" color="neutral" size="sm" :prefix-icon="Redo2" aria-label="Rehacer" title="Rehacer" :disabled="!redoAvailable" @click="changeVersion('redo')" />
-      </div>
-    </div>
     <div
       ref="editor"
       class="knote-block-editor"
@@ -2316,14 +2398,14 @@ onBeforeUnmount(() => {
     />
 
     <div
-      v-if="hoveredBlock"
+      v-if="hoveredBlock && !selectionOpen"
       class="knote-block-actions knote-editor-control"
       :style="blockActionsPosition"
       role="toolbar"
       aria-label="Acciones del bloque"
       @pointerdown.stop
     >
-      <Button variant="glass" color="neutral" size="sm" aria-label="Añadir un bloque debajo" title="Añadir un bloque" @click="openBlockMenu">
+      <Button variant="glass" color="neutral" size="sm" aria-label="Añadir un bloque debajo" title="Añadir un bloque" :aria-expanded="insertMenu?.source === 'button'" @click="openBlockMenu">
         <Icon :icon="Plus" size="sm" />
       </Button>
       <DropdownMenu
@@ -2348,26 +2430,25 @@ onBeforeUnmount(() => {
       </DropdownMenu>
     </div>
 
-    <div v-if="blockMenuOpen" class="knote-block-insert-menu knote-editor-control" :style="blockMenuPosition" @keydown.esc.capture="blockMenuOpen = false">
+    <div v-if="insertMenu" class="knote-editor-command knote-block-insert-menu knote-editor-control" :style="insertPosition" @keydown.esc.capture="handleCommandEscape($event, () => closeInsertMenu(true))">
       <CommandMenu
         :id="`insert-blocks-${pageId}`"
-        v-model="blockMenuOpen"
-        v-model:query="blockMenuQuery"
-        label="Añadir un bloque"
+        :model-value="true"
+        v-model:query="insertQuery"
+        :label="insertMenu.source === 'slash' ? 'Insertar un bloque' : 'Añadir un bloque'"
         placeholder="Buscar bloques…"
         :groups="slashBlockGroups"
         size="sm"
         variant="surface"
         rounded="lg"
-        shadow="md"
-        contained
-        hotkey=""
+        panel
+        @update:model-value="(open) => !open && closeInsertMenu()"
         @select="handleBlockMenuSelection"
-      />
+      ><template #empty>No se encontraron bloques.</template></CommandMenu>
     </div>
 
     <div v-if="activeCodeBlock" class="knote-code-tools knote-editor-control" :style="codeToolbarPosition" @pointerdown.stop>
-      <Button variant="glass" color="neutral" size="sm" aria-label="Elegir lenguaje del código" @click="codeLanguageMenuOpen = !codeLanguageMenuOpen">
+      <Button variant="glass" color="neutral" size="sm" aria-label="Elegir lenguaje del código" :aria-expanded="codeLanguageMenuOpen" @click="toggleCodeLanguageMenu">
         {{ languageLabel(activeCodeBlock) }}<Icon :icon="ChevronDown" size="xs" />
       </Button>
       <Button variant="glass" color="neutral" size="sm" :aria-label="copiedCode ? 'Código copiado' : copyCodeUnavailable ? 'No se pudo copiar el código' : 'Copiar código'" :title="copiedCode ? 'Copiado' : copyCodeUnavailable ? 'Permite el portapapeles en el navegador' : 'Copiar código'" @click="copyCode">
@@ -2376,23 +2457,21 @@ onBeforeUnmount(() => {
       <span v-if="copiedCode" class="knote-code-copied" role="status">Copiado</span>
       <span v-else-if="copyCodeUnavailable" class="knote-code-copied" role="status">No se pudo acceder al portapapeles</span>
       <Button variant="soft" color="neutral" size="sm" shape="fab" aria-label="Cerrar opciones del código" title="Cerrar" @click="clearActiveComponentSettings"><Icon :icon="X" size="xs" /></Button>
-      <div v-if="codeLanguageMenuOpen" class="knote-code-language-menu" @keydown.esc.capture="codeLanguageMenuOpen = false">
-        <CommandMenu
-          :id="`code-languages-${pageId}`"
-          v-model="codeLanguageMenuOpen"
-          v-model:query="codeLanguageQuery"
-          label="Lenguaje del bloque de código"
-          placeholder="Busca un idioma…"
-          :groups="codeLanguageGroups"
-          size="sm"
-          variant="surface"
-          rounded="lg"
-          shadow="md"
-          contained
-          hotkey=""
-          @select="handleCodeLanguageSelection"
-        />
-      </div>
+    </div>
+    <div v-if="codeLanguageMenuOpen" class="knote-editor-command knote-code-language-menu knote-editor-control" :style="codeLanguagePosition" @keydown.esc.capture="handleCommandEscape($event, () => closeCodeLanguageMenu(true))">
+      <CommandMenu
+        :id="`code-languages-${pageId}`"
+        v-model="codeLanguageMenuOpen"
+        v-model:query="codeLanguageQuery"
+        label="Lenguaje del bloque de código"
+        placeholder="Buscar lenguajes…"
+        :groups="codeLanguageGroups"
+        size="sm"
+        variant="surface"
+        rounded="lg"
+        panel
+        @select="handleCodeLanguageSelection"
+      ><template #empty>No se encontraron lenguajes.</template></CommandMenu>
     </div>
 
     <div v-if="activeCallout" class="knote-callout-tools knote-editor-control" :style="calloutToolsPosition" @pointerdown.stop="calloutToolsPinned = true">
@@ -2432,28 +2511,6 @@ onBeforeUnmount(() => {
       <p v-if="imageUploading" role="status">Preparando imagen…</p>
     </div>
 
-    <div
-      v-if="slashMenuOpen"
-      class="knote-slash-command knote-editor-control"
-      :style="slashMenuPosition"
-      @keydown.esc.capture.stop.prevent="cancelSlashMenu()"
-    >
-      <CommandMenu
-        :id="`slash-blocks-${pageId}`"
-        v-model="slashMenuOpen"
-        v-model:query="slashQuery"
-        label="Insertar un bloque"
-        placeholder="Buscar bloques…"
-        :groups="slashBlockGroups"
-        size="sm"
-        variant="surface"
-        rounded="lg"
-        shadow="md"
-        contained
-        hotkey=""
-        @select="handleSlashBlockSelection"
-      />
-    </div>
 
     <div
       v-if="selectionOpen"
@@ -2470,14 +2527,28 @@ onBeforeUnmount(() => {
       <Button variant="glass" color="neutral" size="sm" shape="fab" :prefix-icon="Strikethrough" aria-label="Tachado" title="Tachado" @pointerdown.prevent @click="applyInline('strikeThrough')" />
       <Button variant="glass" color="neutral" size="sm" shape="fab" :prefix-icon="Link2" aria-label="Insertar enlace" title="Insertar enlace" @pointerdown.prevent @click="startLinkEdit" />
       <Button variant="glass" color="neutral" size="sm" shape="fab" :prefix-icon="Code2" aria-label="Código en línea" title="Código en línea" @pointerdown.prevent @click="applyInline('insertHTML')" />
-      <DropdownMenu :id="`selection-formats-${pageId}`" v-model="formatBlocksOpen" open-on-hover label="Más formatos de texto" :items="formatItems" side="bottom" align="end" variant="surface" rounded="xl" class="knote-format-menu" @pointerdown.prevent @select="handleFormatSelection">
-        <template #trigger><Icon :icon="Type" size="sm" /><span>Bloques</span><Icon :icon="ChevronDown" size="xs" /></template>
-      </DropdownMenu>
+      <Button variant="glass" color="neutral" size="sm" :prefix-icon="Type" :suffix-icon="ChevronDown" class="knote-format-menu" aria-label="Más formatos de texto" :aria-expanded="formatBlocksOpen" @pointerdown.prevent @click="toggleFormatMenu">Bloques</Button>
     </div>
-    <div v-if="linkEditorOpen" class="knote-link-editor" :style="{ left: toolbarPosition.left, top: `calc(${toolbarPosition.top} + 3rem)` }">
-      <input :id="`block-link-${pageId}`" v-model="linkDraft" type="url" aria-label="Dirección del enlace" placeholder="https://…" @keydown.enter.stop.prevent="applyLink" @keydown.escape.stop="linkEditorOpen = false" />
+    <div v-if="formatBlocksOpen" class="knote-editor-command knote-selection-format-menu knote-editor-control" :style="formatPosition" @keydown.esc.capture="handleCommandEscape($event, () => closeFormatMenu(true))">
+      <CommandMenu
+        :id="`selection-formats-${pageId}`"
+        :model-value="true"
+        v-model:query="formatQuery"
+        label="Cambiar el tipo de bloque"
+        placeholder="Buscar formatos…"
+        :groups="formatGroups"
+        size="sm"
+        variant="surface"
+        rounded="lg"
+        panel
+        @update:model-value="(open) => !open && closeFormatMenu()"
+        @select="handleFormatSelection"
+      ><template #empty>No se encontraron formatos.</template></CommandMenu>
+    </div>
+    <div v-if="linkEditorOpen" class="knote-link-editor" :style="{ '--knote-link-left': toolbarPosition.left, '--knote-link-top': toolbarPosition.top }" @keydown.esc="handleCommandEscape($event, cancelLinkEdit)">
+      <input :id="`block-link-${pageId}`" v-model="linkDraft" type="url" aria-label="Dirección del enlace" placeholder="https://…" @keydown.enter.stop.prevent="applyLink" />
       <Button variant="glass" color="neutral" size="sm" @pointerdown.prevent @click="applyLink">Aplicar</Button>
-      <Button variant="soft" color="neutral" size="sm" @pointerdown.prevent @click="linkEditorOpen = false">Cancelar</Button>
+      <Button variant="soft" color="neutral" size="sm" @pointerdown.prevent @click="cancelLinkEdit">Cancelar</Button>
     </div>
   </div>
 </template>

@@ -230,10 +230,6 @@
 .knote-block-editor h1 { margin-top: .55rem; }
 .knote-block-editor h2 { margin-top: .45rem; }
 .knote-block-editor h3, .knote-block-editor h4 { margin-top: .35rem; }
-.knote-slash-command { position: absolute; z-index: 145; width: min(20rem, calc(100% - .5rem)); }
-.knote-slash-command [data-balsa="command-menu"] > div { max-width: none; }
-.knote-slash-command [data-balsa="command-list"] [role="combobox"] { height: 2.35rem; padding-inline: .7rem; font-size: .78rem; }
-.knote-slash-command [data-balsa="command-listbox"] { max-height: min(18rem, 44vh); overflow-y: auto; }
 .knote-document-editor .knote-block-editor { min-height: 4rem; }
 .knote-page-summary-editor .knote-block-editor { min-height: 2.8rem; }
 .knote-folder-description .knote-block-editor { min-height: 3.2rem; }

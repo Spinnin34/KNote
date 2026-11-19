@@ -38,6 +38,7 @@ const emit = defineEmits<{
 }>();
 const query = defineModel<string>("query", { default: "" });
 const activeIndex = ref(0);
+const listbox = ref<HTMLElement | null>(null);
 
 const normalizedQuery = computed(() => normalize(query.value.trim()));
 const filteredGroups = computed(() =>
@@ -55,7 +56,7 @@ const filteredGroups = computed(() =>
 const items = computed(() => filteredGroups.value.flatMap((group) => group.items));
 const activeItem = computed(() => items.value[activeIndex.value]);
 const activeId = computed(() =>
-  activeItem.value ? `${props.id}-item-${activeItem.value.id}` : undefined,
+  props.open && activeItem.value && !activeItem.value.disabled ? `${props.id}-item-${activeItem.value.id}` : undefined,
 );
 const variantClasses: Readonly<Record<LayerVariant, string[]>> = {
   surface: ["border-balsa-border-strong bg-balsa-surface-elevated text-balsa-surface-elevated-foreground"],
@@ -114,6 +115,7 @@ function openList(): void {
 }
 
 function handleKeydown(event: KeyboardEvent): void {
+  if (event.isComposing) return;
   if (event.key === "ArrowDown") {
     event.preventDefault();
     if (!props.open) {
@@ -172,12 +174,20 @@ function itemIndex(item: CommandItem): number {
 
 function scrollActiveIntoView(): void {
   void nextTick(() => {
-    if (activeId.value) document.getElementById(activeId.value)?.scrollIntoView({ block: "nearest" });
+    const panel = listbox.value;
+    const option = activeId.value && document.getElementById(activeId.value);
+    if (!panel || !option) return;
+    const bounds = panel.getBoundingClientRect();
+    const rect = option.getBoundingClientRect();
+    if (rect.top < bounds.top) panel.scrollTop += rect.top - bounds.top;
+    else if (rect.bottom > bounds.bottom) panel.scrollTop += rect.bottom - bounds.bottom;
   });
 }
 
 watch([query, items], () => {
   activeIndex.value = Math.max(0, items.value.findIndex((item) => !item.disabled));
+  if (listbox.value) listbox.value.scrollTop = 0;
+  scrollActiveIntoView();
 });
 
 </script>
@@ -208,6 +218,7 @@ watch([query, items], () => {
 
     <div
       v-if="props.open"
+      ref="listbox"
       :id="`${props.id}-listbox`"
       data-balsa="command-listbox"
       :data-shadow="props.shadow"
@@ -245,10 +256,11 @@ watch([query, items], () => {
           :key="item.id"
           type="button"
           role="option"
+          tabindex="-1"
           :aria-selected="item.id === activeItem?.id"
           :disabled="item.disabled"
           :class="itemClasses(item, itemIndex(item))"
-          @mouseenter="activeIndex = itemIndex(item)"
+          @pointermove="!item.disabled && (activeIndex = itemIndex(item))"
           @focus="activeIndex = itemIndex(item)"
           @click="select(item)"
         >

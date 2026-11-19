@@ -114,8 +114,14 @@ function updatePosition(): void {
 }
 
 function close(restoreFocus = true): void {
+  const dismissedLayer = layer.value;
   model.value = false;
-  if (restoreFocus) void nextTick(() => trigger.value?.focus());
+  if (restoreFocus) void nextTick(() => {
+    const focused = document.activeElement;
+    if (focused === document.body || root.value?.contains(focused) || dismissedLayer?.contains(focused)) {
+      trigger.value?.focus({ preventScroll: true });
+    }
+  });
 }
 
 function handleSelection(selection: MenuSelection): void {

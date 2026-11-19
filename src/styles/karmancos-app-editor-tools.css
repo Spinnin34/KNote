@@ -113,11 +113,31 @@ button[id^="entry-icon-"][id$="-trigger"] .knote-icon-trigger { width: 1.8rem; h
   box-shadow: 0 0 0 .18rem color-mix(in oklab, var(--balsa-role-accent) 9%, transparent);
   list-style: none; opacity: .95; pointer-events: none;
 }
-.knote-block-insert-menu, .knote-code-language-menu { position: absolute; z-index: 55; width: min(20rem, calc(100vw - 1.5rem)); }
-.knote-block-insert-menu [data-balsa="command-menu"], .knote-code-language-menu [data-balsa="command-menu"] { max-width: none; }
-.knote-editor-control [data-balsa="command-listbox"] { max-height: min(18rem, 45vh); overflow-y: auto; }
-.knote-editor-control [class*="bg-balsa-surface-elevated"] { background-color: var(--balsa-role-surface) !important; }
-.knote-editor-control [class*="bg-balsa-selected"] {
+.knote-editor-command {
+  position: fixed;
+  z-index: 152;
+  overflow: hidden;
+  border: 1px solid var(--balsa-role-border);
+  border-radius: var(--balsa-radius-control);
+  background: var(--balsa-role-surface);
+  color: var(--balsa-role-foreground);
+  box-shadow: var(--balsa-shadow-panel);
+}
+.knote-editor-command [data-balsa="command-list"] > :first-child {
+  padding-inline: .75rem;
+  border-color: var(--balsa-role-border);
+}
+.knote-editor-command [data-balsa="command-list"] > :first-child:focus-within {
+  background: color-mix(in oklab, var(--balsa-role-accent) 6%, var(--balsa-role-surface));
+  border-color: color-mix(in oklab, var(--balsa-role-accent) 35%, var(--balsa-role-border));
+}
+.knote-editor-command [role="combobox"] { height: 2.5rem; }
+.knote-editor-command [role="combobox"]:focus { outline: none !important; }
+.knote-editor-command [data-balsa="command-listbox"] {
+  max-height: var(--knote-command-list-height);
+  overscroll-behavior: contain;
+}
+.knote-editor-command [role="option"][aria-selected="true"] {
   background-color: color-mix(in oklab, var(--balsa-role-accent) 18%, var(--balsa-role-surface)) !important;
   color: var(--balsa-role-foreground) !important;
 }
@@ -134,7 +154,6 @@ button[id^="entry-icon-"][id$="-trigger"] .knote-icon-trigger { width: 1.8rem; h
 .knote-code-tools [data-balsa="button"]:hover, .knote-callout-tools [data-balsa="button"]:hover, .knote-image-tools [data-balsa="button"]:hover {
   background: color-mix(in oklab, var(--balsa-role-foreground) 7%, transparent) !important; color: var(--balsa-role-foreground);
 }
-.knote-code-language-menu { top: calc(100% + .35rem); left: 0; }
 .knote-code-copied { padding: 0 .35rem; color: var(--balsa-role-accent); font-size: .68rem; white-space: nowrap; }
 .knote-block-editor pre { position: relative; min-height: 2.6rem; padding-top: .8rem; }
 .knote-block-editor pre code { display: block; min-height: 1.15rem; }
@@ -226,7 +245,6 @@ button[id^="entry-icon-"][id$="-trigger"] .knote-icon-trigger { width: 1.8rem; h
 
 @keyframes knote-block-tools-in { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 680px) {
-  .knote-block-actions { left: 0 !important; transform: translateY(-100%); }
   .knote-block-actions [data-balsa="button"] { width: 1.65rem; height: 1.65rem; min-height: 1.65rem; }
   .knote-callout-tools, .knote-image-tools { max-width: calc(100vw - 1rem); }
   .knote-block-editor figure.knote-image-block img { max-height: 52vh; }

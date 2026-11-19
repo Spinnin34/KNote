@@ -1115,7 +1115,7 @@ onBeforeUnmount(() => {
           </header>
 
           <template v-if="activePage.type === 'doc'">
-            <BlockEditor :key="activePage.id + '-document-content'" v-model="activePage.content" :page-id="activePage.id" placeholder="Empieza a escribir…" class="knote-document-editor" document-controls @update:model-value="touchPage(activePage)" />
+            <BlockEditor :key="activePage.id + '-document-content'" v-model="activePage.content" :page-id="activePage.id" placeholder="Empieza a escribir…" class="knote-document-editor" @update:model-value="touchPage(activePage)" />
           </template>
           <template v-else>
             <BlockEditor :key="activePage.id + '-page-content'" v-model="activePage.content" :page-id="activePage.id" :placeholder="activePage.type === 'calendar' ? 'Fechas y eventos de tu espacio…' : 'Organiza aquí el trabajo y las ideas del proyecto…'" class="knote-page-summary-editor" @update:model-value="touchPage(activePage)" />

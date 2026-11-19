@@ -33,6 +33,11 @@ export function createBlock(id: string): HTMLElement {
     return list;
   }
   if (id === 'block:quote') return blankElement('blockquote');
+  if (id === 'block:highlight') {
+    const paragraph = document.createElement('p');
+    paragraph.append(blankElement('mark'));
+    return paragraph;
+  }
   if (id === 'block:table') {
     const block = document.createElement('div');
     block.className = 'knote-table-block';
