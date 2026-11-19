@@ -143,6 +143,7 @@ async function unpublish(): Promise<void> {
       <a :href="url" target="_blank" rel="noopener noreferrer">{{ url }}</a>
       <Button variant="soft" color="neutral" size="sm" :prefix-icon="Copy" :disabled="busy" @click="copy">Copiar enlace</Button>
     </div>
+    <p v-else-if="published" class="knote-cloud-dialog-note">El documento sigue publicado. El enlace actual no se puede copiar desde KNote, pero puedes revocarlo.</p>
     <p v-if="error" class="knote-cloud-inline-error" role="alert">{{ error }}</p>
 
     <template #footer>

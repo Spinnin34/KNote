@@ -119,7 +119,7 @@ onBeforeUnmount(() => {
     <section v-else-if="failure" class="knote-public-message knote-public-message--error" role="alert">
       <h1>{{ failure === 'missing' ? 'Documento no disponible' : 'No se pudo cargar el documento' }}</h1>
       <p>{{ failure === 'missing'
-        ? 'El enlace puede haber caducado o el documento puede haber vuelto a ser privado.'
+        ? 'El enlace puede ser incorrecto o el documento puede haber vuelto a ser privado.'
         : 'La conexión con KNote falló. Puedes volver a intentar abrir este enlace.' }}</p>
       <Button v-if="failure === 'unavailable'" variant="solid" color="primary" size="sm" :prefix-icon="RotateCw" @click="load">Reintentar</Button>
       <Button v-else variant="soft" color="neutral" size="sm" :prefix-icon="ArrowLeft" @click="openWorkspace">Abrir KNote</Button>

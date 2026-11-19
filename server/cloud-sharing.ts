@@ -67,7 +67,7 @@ export async function getShare(request: Request, pageId: string): Promise<Respon
     const shares = (await getDatabase()).collection<ShareDocument>('shares');
     const share = await shares.findOne({ owner: profile.subject, pageId, revokedAt: { $exists: false } });
     const token = share ? decryptShareToken(share.encryptedToken) : null;
-    return cloudResponse({ published: Boolean(share && token), url: token ? `${new URL(request.url).origin}/p/${token}` : null });
+    return cloudResponse({ published: Boolean(share), url: token ? `${new URL(request.url).origin}/p/${token}` : null });
   } catch (error) {
     console.error('[KNote cloud] Share read failed', { errorType: error instanceof Error ? error.name : 'UnknownError' });
     return cloudError('No se pudo consultar el estado de publicación.', 503);

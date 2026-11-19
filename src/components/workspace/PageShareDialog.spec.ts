@@ -55,3 +55,14 @@ it('does not label a document private when its sharing status is unavailable', a
     expect(dialog.get('a').attributes('href')).toBe('https://example.test/p/current-link');
   } finally { dialog.unmount(); }
 });
+
+it('allows revoking an active share whose link cannot be recovered', async () => {
+  vi.mocked(fetchCloudShare).mockResolvedValueOnce({ published: true, url: null });
+  const dialog = openShareDialog();
+  try {
+    await flushPromises();
+    expect(dialog.text()).toContain('Publicado');
+    expect(dialog.get('button').text()).toBe('Poner en privado');
+    expect(dialog.find('a').exists()).toBe(false);
+  } finally { dialog.unmount(); }
+});
