@@ -29,18 +29,32 @@ export class CloudConflictError extends Error {
   }
 }
 
+export class CloudRequestError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = 'CloudRequestError';
+  }
+
+  get retryable(): boolean {
+    return this.status === 0 || this.status === 408 || this.status === 429 || this.status >= 500;
+  }
+}
+
 async function requestJson<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(path, {
     ...init,
     credentials: 'same-origin',
     cache: 'no-store',
     headers: { Accept: 'application/json', ...(init.body ? { 'Content-Type': 'application/json' } : {}), ...init.headers },
-  });
+  }).catch(() => { throw new CloudRequestError('No se pudo conectar con KNote.', 0); });
   const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
   if (response.status === 409 && typeof payload.conflictId === 'string') {
     throw new CloudConflictError(typeof payload.error === 'string' ? payload.error : 'Se detectó un conflicto.', payload.conflictId);
   }
-  if (!response.ok) throw new Error(typeof payload.error === 'string' ? payload.error : 'No se pudo sincronizar con la nube.');
+  if (!response.ok) throw new CloudRequestError(
+    typeof payload.error === 'string' ? payload.error : 'No se pudo sincronizar con la nube.',
+    response.status,
+  );
   return payload as T;
 }
 

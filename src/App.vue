@@ -301,6 +301,8 @@ const pageMenuItems = computed<readonly MenuItem[]>(() => [
   { id: 'favorite', type: 'checkbox', label: activePage.value?.favorite ? 'Quitar de favoritos' : 'Añadir a favoritos', icon: Star, checked: Boolean(activePage.value?.favorite), disabled: !activePage.value },
   { id: 'share-page', label: 'Compartir o publicar documento', icon: Link2, disabled: !activePage.value },
   { id: 'copy-local-link', label: 'Copiar enlace local', icon: Link2, disabled: !activePage.value },
+  ...(saveState.value === 'pending' || saveState.value === 'error'
+    ? [{ id: 'retry-save', label: 'Reintentar guardado', icon: CircleAlert }] : []),
   { id: 'menu-separator', type: 'separator' },
   { id: 'delete', label: 'Eliminar página', icon: Trash2, destructive: true, disabled: !activePage.value },
 ]);
@@ -579,6 +581,7 @@ async function copyCurrentLink(): Promise<void> {
   } catch { notify('No se pudo copiar', 'El navegador no ha dado acceso al portapapeles.', 'warning'); }
 }
 function onPageMenu(selection: MenuSelection): void {
+  if (selection.id === 'retry-save') persist();
   if (selection.id === 'favorite' && activePage.value) toggleFavorite(activePage.value);
   if (selection.id === 'share-page') shareDialogOpen.value = true;
   if (selection.id === 'copy-local-link') void copyCurrentLink();

@@ -22,13 +22,16 @@ let database: Promise<IDBDatabase> | null = null;
 
 function openDatabase(): Promise<IDBDatabase> {
   if (database) return database;
-  database = new Promise((resolve, reject) => {
+  database = new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(DATABASE_NAME, 1);
     request.onupgradeneeded = () => {
       if (!request.result.objectStoreNames.contains(STORE_NAME)) request.result.createObjectStore(STORE_NAME);
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error || new Error('No se pudo abrir la copia local de sincronización.'));
+  }).catch((error: unknown) => {
+    database = null;
+    throw error;
   });
   return database;
 }

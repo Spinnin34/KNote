@@ -8,6 +8,7 @@ import { deleteBlockImage, getBlockImage, isBlockImageRetained, listBlockImageId
 import type { WorkspaceSnapshot } from '@/lib/desktop-vault';
 import { isDesktopRuntime, isDesktopVaultReady, saveDesktopWorkspace } from '@/lib/desktop-vault';
 import { listCloudLocalStates } from '@/lib/cloud-cache';
+import type { CloudSaveResult } from '@/composables/useCloudWorkspace';
 
 interface WorkspacePersistenceOptions {
   pages: Ref<WorkspacePage[]>;
@@ -18,8 +19,10 @@ interface WorkspacePersistenceOptions {
   notify: (title: string, description: string, color?: ToastItem['color']) => void;
   enabled?: Ref<boolean>;
   cloudActive?: Ref<boolean>;
-  persistCloud?: (serializedSnapshot: string) => Promise<'synced' | 'pending' | 'conflict'>;
+  persistCloud?: (serializedSnapshot: string) => Promise<CloudSaveResult>;
 }
+
+const cloudRetryDelays = [2_000, 5_000, 15_000, 30_000, 60_000];
 
 export function useWorkspacePersistence(options: WorkspacePersistenceOptions) {
   const { pages, todayTasks, databaseViewStates, snapshot, notify } = options;
@@ -31,8 +34,11 @@ export function useWorkspacePersistence(options: WorkspacePersistenceOptions) {
   let saveTimer: number | undefined;
   let databaseViewSaveTimer: number | undefined;
   let assetPruneTimer: number | undefined;
+  let cloudRetryTimer: number | undefined;
+  let cloudRetryIndex = 0;
   let desktopSaveQueue: Promise<void> = Promise.resolve();
   let saveRevision = 0;
+  let disposed = false;
 
   async function pruneUnusedBlockImages(): Promise<void> {
     try {
@@ -71,8 +77,30 @@ export function useWorkspacePersistence(options: WorkspacePersistenceOptions) {
     } catch { /* Keep existing images if the browser cannot inspect IndexedDB. */ }
   }
 
+  function cancelCloudRetry(): void {
+    if (cloudRetryTimer === undefined) return;
+    window.clearTimeout(cloudRetryTimer);
+    cloudRetryTimer = undefined;
+  }
+
+  function scheduleCloudRetry(revision: number): void {
+    const delay = cloudRetryDelays[cloudRetryIndex];
+    if (disposed || delay === undefined || !navigator.onLine) return;
+    cloudRetryIndex += 1;
+    cloudRetryTimer = window.setTimeout(() => {
+      cloudRetryTimer = undefined;
+      if (revision === saveRevision && cloudActive.value && navigator.onLine) persistSnapshot();
+    }, delay);
+  }
+
   function persist(): void {
+    cloudRetryIndex = 0;
+    persistSnapshot();
+  }
+
+  function persistSnapshot(): void {
     if (!enabled.value) return;
+    cancelCloudRetry();
     const revision = ++saveRevision;
     if (saveTimer !== undefined) window.clearTimeout(saveTimer);
     saveTimer = undefined;
@@ -112,15 +140,22 @@ export function useWorkspacePersistence(options: WorkspacePersistenceOptions) {
       }
       void options.persistCloud(serializedSnapshot).then((result) => {
         if (revision !== saveRevision) return;
+        if (result === 'retry') {
+          saveState.value = 'pending';
+          scheduleCloudRetry(revision);
+          return;
+        }
         saveState.value = result === 'synced' ? 'saved' : result;
         if (result === 'synced') {
+          cloudRetryIndex = 0;
+          if (disposed) return;
           if (assetPruneTimer !== undefined) window.clearTimeout(assetPruneTimer);
           assetPruneTimer = window.setTimeout(() => { void pruneUnusedBlockImages(); }, 250);
         }
       }).catch(() => {
         if (revision !== saveRevision) return;
         saveState.value = 'error';
-        if (previousState !== 'error') notify('No se pudo guardar', 'El cambio permanece en este dispositivo. Reintenta la sincronización.', 'destructive');
+        if (previousState !== 'error') notify('No se pudo guardar', 'Mantén abierta esta pestaña y vuelve a intentar el guardado.', 'destructive');
       });
       return;
     }
@@ -141,6 +176,7 @@ export function useWorkspacePersistence(options: WorkspacePersistenceOptions) {
     if (!enabled.value) return;
     if (isDesktopRuntime() && !isDesktopVaultReady()) { saveState.value = 'error'; return; }
     saveRevision += 1;
+    cancelCloudRetry();
     if (saveTimer !== undefined) window.clearTimeout(saveTimer);
     saveState.value = 'saving';
     saveTimer = window.setTimeout(persist, 320);
@@ -216,7 +252,16 @@ export function useWorkspacePersistence(options: WorkspacePersistenceOptions) {
     }
   }
 
+  function retryPendingOnline(): void {
+    if (cloudActive.value && saveState.value === 'pending') persist();
+  }
+
+  if (options.persistCloud) window.addEventListener('online', retryPendingOnline);
+
   function dispose(): void {
+    disposed = true;
+    cancelCloudRetry();
+    if (options.persistCloud) window.removeEventListener('online', retryPendingOnline);
     if (assetPruneTimer !== undefined) window.clearTimeout(assetPruneTimer);
     Object.values(bannerObjectUrls.value).forEach((url) => URL.revokeObjectURL(url));
   }
