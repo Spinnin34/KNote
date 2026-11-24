@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue';
-import { Columns3, Ellipsis, Plus, Trash2 } from '@lucide/vue';
+import { Columns3, Copy, Ellipsis, Plus, Rows3, Trash2 } from '@lucide/vue';
 import Table from '@/components/ui/Table.vue';
 import Button from '@/components/ui/Button.vue';
 import DropdownMenu from '@/components/ui/DropdownMenu.vue';
@@ -20,7 +20,9 @@ const activeRow = ref(-1);
 const activeColumn = ref(0);
 const tableRoot = ref<HTMLElement | null>(null);
 const menuItems = computed<readonly MenuItem[]>(() => [
-  { id: 'add-column', label: 'Añadir columna', icon: Columns3, disabled: headers.value.length >= TABLE_LIMITS.columns },
+  { id: 'insert-row', label: 'Insertar fila debajo', icon: Rows3, disabled: rows.value.length >= TABLE_LIMITS.rows },
+  { id: 'duplicate-row', label: 'Duplicar fila', icon: Copy, disabled: activeRow.value < 0 || rows.value.length >= TABLE_LIMITS.rows },
+  { id: 'add-column', label: 'Insertar columna a la derecha', icon: Columns3, disabled: headers.value.length >= TABLE_LIMITS.columns },
   { id: 'remove-column', label: 'Quitar columna seleccionada', icon: Trash2, destructive: true, disabled: headers.value.length <= 1 },
   { id: 'remove-row', label: 'Quitar fila seleccionada', icon: Trash2, destructive: true, disabled: activeRow.value < 0 || rows.value.length <= 1 },
 ]);
@@ -70,10 +72,14 @@ function addRow(): void {
 function changeTable({ id }: MenuSelection): void {
   const column = activeColumn.value;
   const row = activeRow.value;
-  if (id === 'add-column') {
-    headers.value.push(makeCell(`Columna ${headers.value.length + 1}`));
-    rows.value.forEach((item) => item.cells.push(makeCell()));
-    focusCell(row, headers.value.length - 1);
+  if (id === 'insert-row' || id === 'duplicate-row') {
+    const cells = headers.value.map((_, index) => makeCell(id === 'duplicate-row' ? rows.value[row].cells[index].value : ''));
+    rows.value.splice(row + 1, 0, { id: nextId++, cells });
+    focusCell(row + 1, column);
+  } else if (id === 'add-column') {
+    headers.value.splice(column + 1, 0, makeCell(`Columna ${headers.value.length + 1}`));
+    rows.value.forEach((item) => item.cells.splice(column + 1, 0, makeCell()));
+    focusCell(row, column + 1);
   } else if (id === 'remove-column') {
     headers.value.splice(column, 1);
     rows.value.forEach((item) => item.cells.splice(column, 1));
@@ -93,6 +99,11 @@ function handleCellKey(event: KeyboardEvent, row: number, column: number): void 
   } else if (event.key === 'Tab') {
     const width = headers.value.length;
     const index = (row + 1) * width + column + (event.shiftKey ? -1 : 1);
+    if (index === (rows.value.length + 1) * width && rows.value.length < TABLE_LIMITS.rows) {
+      event.preventDefault();
+      addRow();
+      return;
+    }
     if (index < 0 || index >= (rows.value.length + 1) * width) return;
     event.preventDefault();
     focusCell(Math.floor(index / width) - 1, index % width);

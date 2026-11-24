@@ -39,7 +39,7 @@ export const CALL_OUT_ICONS = [
   { id: 'archive', label: 'Archivo', icon: Archive, node: ArchiveNode },
 ] as const;
 
-function escapeHtml(value: string): string {
+export function escapeHtml(value: string): string {
   return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
 }
 
@@ -136,7 +136,7 @@ function legacyMarkdownToHtml(source: string): string {
   return output.join('') || '<p><br></p>';
 }
 
-const allowedTags = new Set(['P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'UL', 'OL', 'LI', 'BLOCKQUOTE', 'PRE', 'CODE', 'STRONG', 'B', 'EM', 'I', 'U', 'S', 'STRIKE', 'DEL', 'MARK', 'A', 'BR', 'HR', 'DETAILS', 'SUMMARY', 'INPUT', 'SPAN', 'FIGURE', 'FIGCAPTION', 'IMG']);
+const allowedTags = new Set(['P', 'DIV', 'DL', 'DT', 'DD', 'H1', 'H2', 'H3', 'H4', 'UL', 'OL', 'LI', 'BLOCKQUOTE', 'PRE', 'CODE', 'STRONG', 'B', 'EM', 'I', 'U', 'S', 'STRIKE', 'DEL', 'MARK', 'A', 'BR', 'HR', 'DETAILS', 'SUMMARY', 'INPUT', 'SPAN', 'FIGURE', 'FIGCAPTION', 'IMG']);
 const omittedTags = new Set(['SCRIPT', 'STYLE', 'TEMPLATE', 'NOSCRIPT']);
 function safeHref(value: string): string | null {
   if (!value.trim()) return null;
@@ -232,7 +232,8 @@ export function sanitizeNodes(nodes: NodeListOf<ChildNode> | ChildNode[]): strin
     if (node instanceof HTMLTableElement) return tablePlaceholder(node);
     if (!allowedTags.has(tag)) return sanitizeNodes(Array.from(node.childNodes));
     if (tag === 'BR') return '<br>';
-    if (tag === 'HR') return '<hr>';
+    if (tag === 'HR') return node.classList.contains('knote-page-break') ? '<hr class="knote-page-break">' : '<hr>';
+    if (tag === 'DIV' && node.classList.contains('knote-toc')) return '<div class="knote-toc" contenteditable="false"></div>';
     if (tag === 'IMG') {
       const assetId = node.getAttribute('data-asset-id') || '';
       const source = assetId && /^[\da-f-]{20,}$/i.test(assetId) ? `knote-asset:${assetId}` : safeImageSource(node.getAttribute('src') || '');

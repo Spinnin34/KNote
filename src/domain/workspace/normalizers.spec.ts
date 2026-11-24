@@ -1,8 +1,29 @@
 import { describe, expect, it } from 'vitest';
 import { normalizeDatabaseViewStates, normalizePages, normalizeTodayTasks } from '@/domain/workspace/normalizers';
+import { databaseTags, updateDatabaseTag } from '@/domain/workspace/database-tags';
 import { samplePages } from '@/domain/workspace/samples';
 
 describe('workspace normalizers', () => {
+  it('keeps custom properties, unchecked values and their visibility after a reload', () => {
+    const fields = [{ id: 'field-1', name: 'Revisado', type: 'checkbox' }];
+    const [page] = normalizePages([{ title: 'Seguimiento', type: 'database', fields, entries: [{ title: 'Ficha', fields: { 'field-1': false } }] }]);
+    expect(page.fields).toEqual(fields);
+    expect(page.entries[0].fields).toEqual({ 'field-1': false });
+    const state = normalizeDatabaseViewStates({ page: { view: 'table', sort: 'title-desc', hiddenFields: ['field-1'], columnOrder: ['field-1', 'title', 'title'], columnWidths: { title: 290, due: 12 } } });
+    expect(state.page).toMatchObject({ sort: 'title-desc', hiddenFields: ['field-1'], columnOrder: ['field-1', 'title'], columnWidths: { title: 290 } });
+  });
+
+  it('keeps a shared tag catalog and updates legacy assignments when a tag is renamed or removed', () => {
+    const [page] = normalizePages([{ title: 'Hoja de ruta', entries: [{ title: 'Tarea', tag: 'Diseño' }] }]);
+    updateDatabaseTag(page, '', 'Pruebas');
+    updateDatabaseTag(page, 'Diseño', 'Interfaz');
+    expect(databaseTags(page)).toEqual(['Interfaz', 'Pruebas']);
+    expect(page.entries[0].tags).toEqual(['Interfaz']);
+    updateDatabaseTag(page, 'Interfaz', '');
+    expect(databaseTags(page)).toEqual(['Pruebas']);
+    expect(page.entries[0].tag).toBeUndefined();
+  });
+
   it('provides editable copies of sample data only when storage is absent', () => {
     const pages = normalizePages(null);
 

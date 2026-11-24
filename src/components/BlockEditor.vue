@@ -3,7 +3,7 @@ import { computed, createApp, nextTick, onBeforeUnmount, onMounted, ref, watch }
 import {
   ArrowDown, ArrowUp, Bold, ChevronDown, Code2, Columns3, Copy, GripVertical, Highlighter, Image as ImageIcon, Italic,
   Link2, List, ListOrdered, ListTodo, Minus, Plus, Quote, Sigma, Strikethrough, Table as TableIcon,
-  Trash2, Type, Underline, X,
+  BookOpen, ListTree, SeparatorHorizontal, Trash2, Type, Underline, X,
 } from '@lucide/vue';
 import Button from '@/components/ui/Button.vue';
 import CommandMenu from '@/components/ui/CommandMenu.vue';
@@ -15,6 +15,7 @@ import TableBlockEditor from '@/components/BlockTableEditor.vue';
 import type { CommandGroup, CommandItem } from '@/components/ui/command';
 import type { MenuItem, MenuSelection } from '@/components/ui/menu';
 import { CALL_OUT_ICONS, EMPTY_TABLE, LANGUAGE_IDS, LANGUAGES, RICH_PREFIX, TABLE_LIMITS, calloutGlyph, codeBlockText, initialHtml, normalizeTableData, safeBlockColor, safeLanguage, sanitizeNodes, tableDataFromBlock, type EditorTableData } from '@/components/block-editor/content';
+import { refreshDocumentOutline } from '@/components/block-editor/outline';
 import { blankElement, createBlock, createTaskCheckbox } from '@/components/block-editor/block-factory';
 import { blockFromListItem, convertListItemsToList, listItemContent, mergeAdjacentLists, replaceSelectedListItems } from '@/components/block-editor/list-transformations';
 import { captureDocumentSelection, createDocumentHistory, restoreDocumentSelection } from '@/components/block-editor/history';
@@ -133,6 +134,9 @@ const slashBlockGroups: readonly CommandGroup[] = [{
 }, {
   id: 'insert-layout', label: 'Estructura', items: [
     { id: 'block:toggle', label: 'Lista desplegable', keywords: ['plegable', 'toggle'], icon: ChevronDown },
+    { id: 'block:toc', label: 'Índice de contenidos', keywords: ['índice', 'encabezados', 'navegar'], icon: ListTree },
+    { id: 'block:page-break', label: 'Salto de página', keywords: ['pdf', 'imprimir', 'sección'], icon: SeparatorHorizontal },
+    { id: 'block:definition', label: 'Definición', keywords: ['glosario', 'término'], icon: BookOpen },
     { id: 'block:divider', label: 'Divisor', keywords: ['línea', 'separador'], icon: Minus },
     ...[2, 3, 4, 5].map((count) => ({ id: `block:columns:${count}`, label: `${count} columnas`, keywords: ['columnas', 'diseño'], icon: Columns3 })),
   ],
@@ -174,7 +178,7 @@ function directBlock(node: Node | null): HTMLElement | null {
   if (!root || !node) return null;
   let element = node instanceof HTMLElement ? node : node.parentElement;
   while (element && element !== root) {
-    const callout = element.closest('.knote-callout');
+    const callout = element.closest<HTMLElement>('.knote-callout, .knote-toc, dl');
     if (callout instanceof HTMLElement && root.contains(callout)) return callout;
     // A list is one editor block. Returning each LI here created a fresh
     // manager for every line and made dragging/deleting a list unpredictable.
@@ -195,7 +199,7 @@ function nearestBlockAtY(clientY: number): HTMLElement | null {
   const root = rootElement();
   if (!root) return null;
   const candidates = Array.from(root.querySelectorAll<HTMLElement>(
-    'p, h1, h2, h3, h4, ul, ol, blockquote, pre, hr, details, figure, .knote-callout, .knote-table-block, .knote-preview-columns, .knote-equation',
+    'p, h1, h2, h3, h4, ul, ol, blockquote, pre, hr, details, figure, dl, .knote-toc, .knote-callout, .knote-table-block, .knote-preview-columns, .knote-equation',
   )).filter((candidate) => directBlock(candidate) === candidate);
   let nearest: HTMLElement | null = null;
   let nearestDistance = Number.POSITIVE_INFINITY;
@@ -357,7 +361,7 @@ function bookmarkEditorSelection(root: HTMLElement): () => void {
   };
 }
 const editorContainers = '.knote-preview-column, details > div';
-const plainEditorDiv = 'div:not(.knote-callout, .knote-table-block, .knote-preview-columns, .knote-equation)';
+const plainEditorDiv = 'div:not(.knote-toc, .knote-callout, .knote-table-block, .knote-preview-columns, .knote-equation)';
 const inlineEditorNode = 'a, span, strong, b, em, i, u, s, del, strike, code, mark, img, br';
 
 function normalizeEditorDom(root: HTMLElement): void {
@@ -467,6 +471,7 @@ function emitDocument(normalize = true, group = ''): void {
   if ((activeCodeBlock.value && !root.contains(activeCodeBlock.value))
     || (activeCallout.value && !root.contains(activeCallout.value))
     || (activeImage.value && !root.contains(activeImage.value))) clearActiveComponentSettings();
+  refreshDocumentOutline(root, props.pageId);
   mountTableBlocks(root);
   const contentNodes = Array.from(root.childNodes).filter((node) =>
     node instanceof HTMLElement || (node.nodeType === Node.TEXT_NODE && hasVisibleEditorText(node.textContent)),
@@ -665,14 +670,14 @@ function insertBlockAt(anchor: HTMLElement | null, id: string): void {
   if (target instanceof HTMLLIElement && target.parentElement && ['UL', 'OL'].includes(target.parentElement.tagName)) target = target.parentElement;
   if (target && !root.contains(target)) target = null;
   const block = createBlock(id);
-  const trailing = block.tagName === 'HR' ? blankElement('p') : null;
+  const trailing = block.matches('hr, .knote-toc') ? blankElement('p') : null;
   if (target?.parentNode) {
     if (isBlankParagraph(target)) target.replaceWith(...(trailing ? [block, trailing] : [block]));
     else target.after(...(trailing ? [block, trailing] : [block]));
   } else root.append(...(trailing ? [block, trailing] : [block]));
   if (id === 'block:table') mountTableBlocks(root);
   insertionAnchor.value = null;
-  const caretTarget = trailing || block;
+  const caretTarget = trailing || block.querySelector<HTMLElement>(':scope > dd') || block;
   placeCaretAtEnd(caretTarget);
   emitDocument();
   scheduleSelectionUpdate();
@@ -1008,7 +1013,7 @@ function beginBlockPointerDrag(event: PointerEvent): void {
   const root = rootElement();
   dropBlockRects = new Map(
     Array.from(root?.querySelectorAll<HTMLElement>(
-      'p, h1, h2, h3, h4, ul, ol, blockquote, pre, hr, details, figure, .knote-callout, .knote-table-block, .knote-preview-columns, .knote-equation',
+      'p, h1, h2, h3, h4, ul, ol, blockquote, pre, hr, details, figure, dl, .knote-toc, .knote-callout, .knote-table-block, .knote-preview-columns, .knote-equation',
     ) ?? [])
       .filter((block) => directBlock(block) === block)
       .map((block) => {
@@ -1062,7 +1067,7 @@ function dropTargetAtPointer(clientX: number, clientY: number): HTMLElement | nu
   // Resolve empty gaps and the space after the final block to the nearest
   // compatible block so the insertion marker can reach every slot.
   const candidates = Array.from(root.querySelectorAll<HTMLElement>(
-    'p, h1, h2, h3, h4, ul, ol, blockquote, pre, hr, details, figure, .knote-callout, .knote-table-block, .knote-preview-columns, .knote-equation',
+    'p, h1, h2, h3, h4, ul, ol, blockquote, pre, hr, details, figure, dl, .knote-toc, .knote-callout, .knote-table-block, .knote-preview-columns, .knote-equation',
   )).filter((candidate) =>
     directBlock(candidate) === candidate
     && (!dragged || canDropBlock(dragged, candidate)),
@@ -1477,6 +1482,7 @@ function focusEnd(): void {
 defineExpose({ focusEnd });
 
 function canApplyBlock(id: string, targets: readonly HTMLElement[]): boolean {
+  if (['block:toc', 'block:page-break', 'block:definition'].includes(id)) return false;
   if (['block:image', 'block:divider', 'block:highlight'].includes(id)) return true;
   if (targets.some((target) => target.matches('figure, .knote-table-block, .knote-preview-columns, details, hr'))) return false;
   return !targets.some((target) => target.matches('ul, ol'))
@@ -2234,6 +2240,12 @@ function handlePaste(event: ClipboardEvent): void {
   void hydrateImageAssets(root);
 }
 function handleEditorClick(event: MouseEvent): void {
+  const outlineLink = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>('.knote-toc a') : null;
+  if (outlineLink) {
+    event.preventDefault();
+    document.getElementById(outlineLink.hash.slice(1))?.scrollIntoView({ block: 'center' });
+    return;
+  }
   const target = event.target;
   if (!(target instanceof HTMLElement)) return;
   updateHoveredBlockFromSelection();
@@ -2300,7 +2312,11 @@ function renderDocument(root: HTMLElement, value: string): void {
     cancelImageInsertion();
     clearActiveComponentSettings();
     unmountTableBlocks();
-    root.innerHTML = initialHtml(value);
+    const template = document.createElement('template');
+    template.innerHTML = initialHtml(value);
+    template.content.querySelectorAll('img[data-asset-id]').forEach((image) => image.removeAttribute('src'));
+    root.replaceChildren(template.content);
+    refreshDocumentOutline(root, props.pageId);
     normalizeEditorDom(root);
     mountTableBlocks(root);
     updateEditorPlaceholder(root);

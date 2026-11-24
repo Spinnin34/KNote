@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { replaceTaskDescription, taskDescription } from './task-description';
+import { refreshDocumentOutline } from './outline';
 import { initialHtml, normalizeTableData, RICH_PREFIX, sanitizeNodes, tableDataFromBlock } from './content';
 
 function parse(html: string): DocumentFragment {
@@ -19,6 +21,31 @@ describe('document content', () => {
     expect(restored.querySelector('ol')?.start).toBe(4);
     expect(Array.from(restored.querySelectorAll('input'), (input) => input.checked)).toEqual([false, true]);
     expect(initialHtml(RICH_PREFIX + html)).toBe(html);
+  });
+
+  it('rebuilds an outline from edited headings and preserves glossary and page breaks on reload', () => {
+    const html = '<div class="knote-toc"></div><h2>Primero</h2><hr class="knote-page-break"><dl><dt>Clave</dt><dd>Valor</dd></dl>';
+    const root = parse(initialHtml(RICH_PREFIX + html));
+    refreshDocumentOutline(root, 'qa');
+    const link = root.querySelector('a')!;
+    expect(link.textContent).toBe('Primero');
+    expect(link.hash).toBe('#' + root.querySelector('h2')!.id);
+    root.querySelector('h2')!.textContent = 'Revisado';
+    refreshDocumentOutline(root, 'qa');
+    expect(root.querySelector('a')!.textContent).toBe('Revisado');
+    const restored = parse(initialHtml(RICH_PREFIX + sanitizeNodes(root.childNodes)));
+    expect(restored.querySelector('.knote-toc')!.textContent).toBe('');
+    expect(restored.querySelector('hr.knote-page-break')).toBeTruthy();
+    expect(restored.querySelector('dd')!.textContent).toBe('Valor');
+  });
+
+  it('edits a task summary without replacing formatted content or a newer edit', () => {
+    const existing = RICH_PREFIX + '<h2>Plan</h2><p><strong>Detalle</strong></p>';
+    const updated = replaceTaskDescription(existing, '', 'Resumen\nSegunda línea');
+    expect(updated).toContain('<h2>Plan</h2><p><strong>Detalle</strong></p>');
+    expect(taskDescription(updated!)).toBe('Resumen\nSegunda línea');
+    expect(replaceTaskDescription(updated!, '', 'Obsoleto')).toBeNull();
+    expect(replaceTaskDescription(updated!, 'Resumen\nSegunda línea', '')).toBe(existing);
   });
 
   it('does not carry pasted script text or generate links and images with empty destinations', () => {

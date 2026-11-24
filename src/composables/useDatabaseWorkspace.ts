@@ -3,7 +3,7 @@ import { LayoutDashboard, Table2 } from '@lucide/vue';
 import type { CalendarModelValue } from '@/components/ui/Calendar.vue';
 import type { MenuItem, MenuSelection } from '@/components/ui/menu';
 import type { ToastItem } from '@/components/ui/ToastViewport.vue';
-import type { BoardStatus, DatabaseFilter, DatabaseProperty, DatabaseSort, DatabaseViewState, PageEntry, PageSubtask, TaskPriority, WorkspacePage } from '@/domain/workspace/types';
+import type { BoardStatus, DatabaseField, DatabaseFilter, DatabaseProperty, DatabaseSort, DatabaseViewState, PageEntry, PageSubtask, TaskPriority, WorkspacePage } from '@/domain/workspace/types';
 import { BOARD_STATUSES, DEFAULT_DATABASE_PROPERTIES, TASK_PRIORITIES } from '@/domain/workspace/constants';
 import { entryTags } from '@/domain/workspace/normalizers';
 import { makeId } from '@/domain/workspace/ids';
@@ -19,16 +19,12 @@ type DatabaseWorkspaceContext = {
   detailPageId: Ref<string | null>;
   detailEntryId: Ref<string | null>;
   entryInspectorScroll: Ref<HTMLElement | null>;
-  detailTagsDraft: Ref<string>;
   newSubtaskTitle: Ref<string>;
   tableSubtaskComposerId: Ref<string | null>;
   tableSubtaskDraft: Ref<string>;
   newTableEntryTitle: Ref<string>;
-  editingTagsEntryId: Ref<string | null>;
-  databaseTagsDraft: Ref<string>;
   draggedEntryId: Ref<string | null>;
   dropTargetEntryId: Ref<string | null>;
-  taskDescriptionEditor: Ref<{ focusEnd: () => void } | null>;
   selectedDate: Ref<CalendarModelValue>;
   touchPage: (page: WorkspacePage) => void;
   notify: (title: string, description: string, color?: ToastItem['color']) => void;
@@ -37,10 +33,10 @@ type DatabaseWorkspaceContext = {
 export function useDatabaseWorkspace(context: DatabaseWorkspaceContext) {
   const {
     pages, selectedId, databaseViewStates, activePage, nonDatabaseActiveView, entryInspectorOpen,
-    deleteEntryModalOpen, detailPageId, detailEntryId, entryInspectorScroll, detailTagsDraft,
+    deleteEntryModalOpen, detailPageId, detailEntryId, entryInspectorScroll,
     newSubtaskTitle, tableSubtaskComposerId, tableSubtaskDraft, newTableEntryTitle,
-    editingTagsEntryId, databaseTagsDraft, draggedEntryId, dropTargetEntryId,
-    taskDescriptionEditor, selectedDate, touchPage, notify,
+    draggedEntryId, dropTargetEntryId,
+    selectedDate, touchPage, notify,
   } = context;
 function defaultDatabaseViewState(page: WorkspacePage): DatabaseViewState {
   return {
@@ -75,9 +71,20 @@ const databaseProperties = computed<DatabaseProperty[]>({
   get: () => getDatabaseViewState()?.properties ?? DEFAULT_DATABASE_PROPERTIES,
   set: (value) => updateDatabaseViewState('properties', value),
 });
-const visibleDatabaseProperties = computed(() => entryInspectorOpen.value && activeView.value === 'table'
-  ? databaseProperties.value.filter((property) => property !== 'content' && property !== 'tags')
-  : databaseProperties.value);
+const databaseColumnOrder = computed({
+  get: () => getDatabaseViewState()?.columnOrder ?? [],
+  set: (order: string[]) => updateDatabaseViewState('columnOrder', order),
+});
+const databaseColumnWidths = computed({
+  get: () => getDatabaseViewState()?.columnWidths ?? {},
+  set: (widths: Record<string, number>) => updateDatabaseViewState('columnWidths', widths),
+});
+const visibleDatabaseProperties = databaseProperties;
+const visibleFields = computed(() => (activePage.value?.fields || []).filter((field) => !getDatabaseViewState()?.hiddenFields?.includes(field.id)));
+function updateFieldValue(page: WorkspacePage, entry: PageEntry, field: DatabaseField, value: string | number | boolean) {
+  entry.fields = { ...entry.fields, [field.id]: field.type === 'checkbox' ? value === true : String(value) };
+  touchPage(page);
+}
 const collapsedTableEntries = computed<string[]>({
   get: () => getDatabaseViewState()?.collapsedEntryIds ?? [],
   set: (value) => updateDatabaseViewState('collapsedEntryIds', value),
@@ -115,15 +122,20 @@ const databasePropertyLabels: Record<DatabaseProperty, string> = {
 const databaseSortItems = computed<MenuItem[]>(() => [
   { id: 'sort:manual', label: 'Orden original', type: 'radio', group: 'sort', checked: databaseSort.value === 'manual' },
   { id: 'sort:title', label: 'Nombre A–Z', type: 'radio', group: 'sort', checked: databaseSort.value === 'title' },
+  { id: 'sort:title-desc', label: 'Nombre Z–A', type: 'radio', group: 'sort', checked: databaseSort.value === 'title-desc' },
+  { id: 'sort:status', label: 'Estado', type: 'radio', group: 'sort', checked: databaseSort.value === 'status' },
+  { id: 'sort:due-desc', label: 'Fecha más lejana', type: 'radio', group: 'sort', checked: databaseSort.value === 'due-desc' },
   { id: 'sort:due', label: 'Fecha más próxima', type: 'radio', group: 'sort', checked: databaseSort.value === 'due' },
   { id: 'sort:priority', label: 'Prioridad', type: 'radio', group: 'sort', checked: databaseSort.value === 'priority' },
 ]);
-const databasePropertyItems = computed<MenuItem[]>(() => (Object.keys(databasePropertyLabels) as DatabaseProperty[]).map((property) => ({
+const databasePropertyItems = computed<MenuItem[]>(() => [...(Object.keys(databasePropertyLabels) as DatabaseProperty[]).map((property) => ({
   id: `property:${property}`,
   label: databasePropertyLabels[property],
-  type: 'checkbox',
+  type: 'checkbox' as const,
   checked: databaseProperties.value.includes(property),
-})));
+})), ...(activePage.value?.fields || []).map((field) => ({
+  id: field.id, label: field.name, type: 'checkbox' as const, checked: visibleFields.value.includes(field),
+})), { id: 'add-property', label: 'Añadir propiedad…' }, { id: 'manage-tags', label: 'Gestionar etiquetas…' }]);
 
 function entriesForStatus(page: WorkspacePage, status: BoardStatus): PageEntry[] {
   const viewState = getDatabaseViewState(page.id) ?? defaultDatabaseViewState(page);
@@ -132,15 +144,20 @@ function entriesForStatus(page: WorkspacePage, status: BoardStatus): PageEntry[]
     if (entry.status !== status) return false;
     if (viewState.filter !== 'Todas' && viewState.filter !== status) return false;
     if (!query) return true;
-    return [entry.title, entry.status, entry.priority, entry.due, entryDescription(entry), ...entryTags(entry), ...entrySubtasks(entry).map((subtask) => subtask.title)]
+    return [entry.title, entry.status, entry.priority, entry.due, entryDescription(entry), ...entryTags(entry), ...Object.values(entry.fields || {}), ...entrySubtasks(entry).map((subtask) => subtask.title)]
       .filter(Boolean).join(' ').replace(/<[^>]*>/g, ' ').toLocaleLowerCase('es').includes(query);
   }), page.id);
 }
 function sortDatabaseEntries(entries: PageEntry[], pageId = selectedId.value): PageEntry[] {
   const sort = getDatabaseViewState(pageId)?.sort ?? 'manual';
   const result = [...entries];
-  if (sort === 'title') result.sort((left, right) => left.title.localeCompare(right.title, 'es'));
-  if (sort === 'due') result.sort((left, right) => (entryCalendarDate(left)?.getTime() ?? Number.POSITIVE_INFINITY) - (entryCalendarDate(right)?.getTime() ?? Number.POSITIVE_INFINITY));
+  if (sort === 'title' || sort === 'title-desc') result.sort((left, right) => left.title.localeCompare(right.title, 'es', { numeric: true }) * (sort === 'title' ? 1 : -1));
+  if (sort === 'status') result.sort((left, right) => BOARD_STATUSES.indexOf(left.status) - BOARD_STATUSES.indexOf(right.status));
+  if (sort === 'due' || sort === 'due-desc') {
+    const sign = sort === 'due' ? 1 : -1;
+    const dateRank = (entry: PageEntry) => (entryCalendarDate(entry)?.getTime() ?? sign * Infinity) * sign;
+    result.sort((left, right) => dateRank(left) - dateRank(right));
+  }
   if (sort === 'priority') {
     const rank: Record<TaskPriority, number> = { Urgente: 0, Alta: 1, Media: 2, Baja: 3 };
     result.sort((left, right) => (left.priority ? rank[left.priority] : 4) - (right.priority ? rank[right.priority] : 4));
@@ -155,11 +172,11 @@ const databaseEntries = computed(() => {
   return sortDatabaseEntries(page.entries.filter((entry) => {
     if (viewState.filter !== 'Todas' && viewState.filter !== entry.status) return false;
     if (!query) return true;
-    return [entry.title, entry.status, entry.priority, entry.due, entryDescription(entry), ...entryTags(entry), ...entrySubtasks(entry).map((subtask) => subtask.title)]
+    return [entry.title, entry.status, entry.priority, entry.due, entryDescription(entry), ...entryTags(entry), ...Object.values(entry.fields || {}), ...entrySubtasks(entry).map((subtask) => subtask.title)]
       .filter(Boolean).join(' ').toLocaleLowerCase('es').includes(query);
   }), page.id);
 });
-const databaseEntryCount = computed(() => databaseEntries.value.reduce((count, entry) => count + 1 + entrySubtasks(entry).length, 0));
+const databaseEntryCount = computed(() => databaseEntries.value.length);
 function toggleTableEntry(entryId: string): void {
   collapsedTableEntries.value = collapsedTableEntries.value.includes(entryId)
     ? collapsedTableEntries.value.filter((id) => id !== entryId)
@@ -189,24 +206,29 @@ function updateTableSubtask(page: WorkspacePage, subtask: PageSubtask, patch: Pa
 }
 function focusNewTableEntry(): void {
   if (activeView.value !== 'table') activeView.value = 'table';
-  void nextTick(() => document.getElementById('table-new-entry')?.focus({ preventScroll: true }));
+  void nextTick(() => document.getElementById('table-new-entry')?.focus());
 }
 function addTableEntry(page: WorkspacePage): void {
   const title = newTableEntryTitle.value.trim();
   if (!title) return;
-  const entry: PageEntry = { id: makeId(), title, status: 'Por hacer', content: '', subtasks: [] };
+  const status = databaseStatusFilter.value === 'Todas' ? 'Por hacer' : databaseStatusFilter.value;
+  const entry: PageEntry = { id: makeId(), title, status, content: '', subtasks: [] };
   page.entries.push(entry);
   newTableEntryTitle.value = '';
-  databaseStatusFilter.value = 'Todas';
-  databaseQuery.value = '';
   touchPage(page);
-  openEntryDetails(page, entry);
+  if (!databaseEntries.value.some((item) => item.id === entry.id)) notify('Tarea creada', 'La búsqueda actual oculta esta fila.', 'info');
+  focusNewTableEntry();
 }
 function handleDatabaseSort(selection: MenuSelection): void {
   if (!selection.id.startsWith('sort:')) return;
   databaseSort.value = selection.id.slice(5) as DatabaseSort;
 }
 function handleDatabaseProperty(selection: MenuSelection): void {
+  if (selection.id.startsWith('field-')) {
+    const hidden = getDatabaseViewState()?.hiddenFields || [];
+    updateDatabaseViewState('hiddenFields', hidden.includes(selection.id) ? hidden.filter((id) => id !== selection.id) : [...hidden, selection.id]);
+    return;
+  }
   if (!selection.id.startsWith('property:')) return;
   const property = selection.id.slice(9) as DatabaseProperty;
   databaseProperties.value = databaseProperties.value.includes(property)
@@ -239,15 +261,24 @@ function parseEntryTags(value: string): string[] {
 function entryTagsLabel(entry: PageEntry): string {
   return entryTags(entry).join(', ') || '—';
 }
+let returnTarget: HTMLElement | null = null;
+function closeEntryDetails() {
+  entryInspectorOpen.value = false;
+  const target = returnTarget;
+  void nextTick(() => { if (target?.isConnected) target.focus({ preventScroll: true }); });
+}
 function openEntryDetails(page: WorkspacePage, entry: PageEntry): void {
   tableSubtaskComposerId.value = null;
   tableSubtaskDraft.value = '';
+  if (document.activeElement instanceof HTMLElement && !document.activeElement.closest('.knote-entry-inspector')) returnTarget = document.activeElement;
   detailPageId.value = page.id;
   detailEntryId.value = entry.id;
-  detailTagsDraft.value = entryTags(entry).join(', ');
   newSubtaskTitle.value = '';
   entryInspectorOpen.value = true;
-  void nextTick(() => { if (entryInspectorScroll.value) entryInspectorScroll.value.scrollTop = 0; });
+  void nextTick(() => { if (entryInspectorScroll.value) {
+    entryInspectorScroll.value.scrollTop = 0;
+    document.getElementById('task-document-header')?.focus({ preventScroll: true });
+  } });
 }
 function duplicateDetailEntry(): void {
   const page = detailPage.value;
@@ -320,29 +351,6 @@ function setEntryPriority(page: WorkspacePage, entry: PageEntry, value: string |
   else return;
   touchPage(page);
 }
-function openEntryDescription(page: WorkspacePage, entry: PageEntry): void {
-  openEntryDetails(page, entry);
-  void nextTick(() => taskDescriptionEditor.value?.focusEnd());
-}
-function beginEntryTagsEdit(entry: PageEntry): void {
-  databaseTagsDraft.value = entryTags(entry).join(', ');
-  editingTagsEntryId.value = entry.id;
-  void nextTick(() => document.getElementById(`database-tags-${entry.id}`)?.focus({ preventScroll: true }));
-}
-function updateEntryTagsDraft(value: string | number): void {
-  databaseTagsDraft.value = String(value);
-}
-function finishEntryTagsEdit(page: WorkspacePage, entry: PageEntry): void {
-  if (editingTagsEntryId.value !== entry.id) return;
-  const tags = parseEntryTags(databaseTagsDraft.value);
-  entry.tags = tags;
-  entry.tag = tags[0];
-  editingTagsEntryId.value = null;
-  touchPage(page);
-}
-function cancelEntryTagsEdit(entry: PageEntry): void {
-  if (editingTagsEntryId.value === entry.id) editingTagsEntryId.value = null;
-}
 function updateDetailContent(value: string): void {
   if (!detailEntry.value) return;
   detailEntry.value.content = value;
@@ -350,13 +358,6 @@ function updateDetailContent(value: string): void {
 }
 function touchDetailEntry(): void {
   if (detailPage.value) touchPage(detailPage.value);
-}
-function updateDetailTags(value: string | number): void {
-  detailTagsDraft.value = String(value);
-  if (!detailEntry.value) return;
-  detailEntry.value.tags = parseEntryTags(detailTagsDraft.value);
-  detailEntry.value.tag = detailEntry.value.tags[0];
-  touchDetailEntry();
 }
 function addDetailSubtask(): void {
   const title = newSubtaskTitle.value.trim();
@@ -509,12 +510,11 @@ function entryDoneChanged(page: WorkspacePage, entry: PageEntry, done: boolean):
     detailPage, detailEntry, visibleBoardStatuses, boardViewTabs, databaseViewTabs, databaseStatusOptions,
     databaseSortItems, databasePropertyItems, entriesForStatus, databaseEntries, databaseEntryCount,
     toggleTableEntry, openTableSubtaskComposer, addTableSubtask, updateTableSubtask, focusNewTableEntry,
-    addTableEntry, handleDatabaseSort, handleDatabaseProperty, entrySubtasks, entryDescription,
+    databaseColumnOrder, databaseColumnWidths, closeEntryDetails, visibleFields, updateFieldValue, addTableEntry, handleDatabaseSort, handleDatabaseProperty, entrySubtasks, entryDescription,
     detailSubtaskProgress, entryTagsLabel, openEntryDetails, duplicateDetailEntry, deleteDetailEntry,
     updateDetailTitle, updateDetailDue, detailDateValue, detailDueIsDate, updateDetailDueFromPicker,
-    updateEntryDueFromPicker, setEntryStatus, setEntryPriority, openEntryDescription,
-    beginEntryTagsEdit, updateEntryTagsDraft, finishEntryTagsEdit, cancelEntryTagsEdit,
-    updateDetailContent, updateDetailTags, addDetailSubtask, focusNewSubtask, setDetailSubtaskTitle,
+    updateEntryDueFromPicker, setEntryStatus, setEntryPriority,
+    updateDetailContent, addDetailSubtask, focusNewSubtask, setDetailSubtaskTitle,
     setDetailSubtaskDone, removeDetailSubtask, clearCompletedSubtasks, setDetailPriority, setDetailStatus,
     handleBoardDragStart, handleBoardDragOver, dropBoardEntry, handleBoardDragEnd,
     entryDateLabel, entryCalendarDate, entriesForSelectedDate, entryDoneChanged,

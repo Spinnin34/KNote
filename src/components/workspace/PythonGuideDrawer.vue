@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
-import { BookOpen, Check, ChevronRight, Code2, Copy, ExternalLink, Play } from '@lucide/vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { ArrowLeft, BookOpen, Check, ChevronRight, Code2, Copy, ExternalLink, Play } from '@lucide/vue';
 import Badge from '@/components/ui/Badge.vue';
 import Button from '@/components/ui/Button.vue';
 import Drawer from '@/components/ui/Drawer.vue';
@@ -19,6 +19,22 @@ const query = ref('');
 const category = ref('Todo');
 const selectedId = ref('if');
 const copied = ref(false);
+const reading = ref(false);
+const copyError = ref(false);
+let copyVersion = 0;
+function readTopic(id: string) {
+  selectedId.value = id;
+  reading.value = true;
+  void nextTick(() => {
+    const title = document.getElementById('guide-topic-' + pageId);
+    title?.focus({ preventScroll: true });
+    title?.scrollIntoView({ block: 'nearest' });
+  });
+}
+function showTopics() {
+  reading.value = false;
+  void nextTick(() => document.getElementById('guide-nav-' + selectedTopic.value?.id)?.focus());
+}
 let copiedTimer = 0;
 
 const visibleTopics = computed(() => {
@@ -34,16 +50,23 @@ const selectedTopic = computed(() => visibleTopics.value.find((topic) => topic.i
 
 watch(open, (isOpen) => {
   if (!isOpen) return;
+  reading.value = false;
   copied.value = false;
+  copyError.value = false;
 });
+watch([selectedTopic, open], () => { copyVersion++; copied.value = false; copyError.value = false; });
 
-function copyExample(): void {
+async function copyExample() {
   if (!selectedTopic.value) return;
-  void navigator.clipboard?.writeText(selectedTopic.value.code).then(() => {
+  const version = ++copyVersion;
+  try {
+    await navigator.clipboard.writeText(selectedTopic.value.code);
+    if (version !== copyVersion) return;
     copied.value = true;
+    copyError.value = false;
     window.clearTimeout(copiedTimer);
     copiedTimer = window.setTimeout(() => { copied.value = false; }, 1500);
-  }).catch(() => { copied.value = false; });
+  } catch { if (version === copyVersion) copyError.value = true; }
 }
 
 function insertExample(): void {
@@ -60,14 +83,14 @@ onBeforeUnmount(() => window.clearTimeout(copiedTimer));
     :id="`python-guide-${pageId}`"
     v-model="open"
     title="Guía rápida de Python"
-    description="Referencia práctica para seguir programando."
     side="right"
     size="lg"
-    class="w-[min(56rem,calc(100vw-1rem))]"
+    class="knote-guide-drawer"
+    :initial-focus="'#python-guide-search-' + pageId"
     :show-handle="false"
     close-label="Cerrar guía de Python"
   >
-    <div class="knote-python-guide">
+    <div class="knote-python-guide" :class="{ 'knote-python-guide--reading': reading }">
       <div class="knote-python-guide-toolbar">
         <div class="knote-python-guide-search">
           <Input
@@ -99,19 +122,20 @@ onBeforeUnmount(() => window.clearTimeout(copiedTimer));
           visibility="hover"
           size="thin"
           edge-fade
-          class="knote-python-guide-pane"
+          class="knote-python-guide-pane knote-guide-index"
         >
           <nav class="knote-python-guide-topics" aria-label="Temas de Python">
-            <p class="knote-python-guide-section-label">REFERENCIA</p>
+
             <Button
               v-for="topic in visibleTopics"
               :key="topic.id"
+              :id="'guide-nav-' + topic.id"
               variant="soft"
               :color="selectedTopic?.id === topic.id ? 'primary' : 'neutral'"
               size="sm"
               class="knote-python-guide-topic"
               :aria-pressed="selectedTopic?.id === topic.id"
-              @click="selectedId = topic.id; copied = false"
+              @click="readTopic(topic.id)"
             >
               <span class="knote-python-guide-topic-copy">
                 <strong>{{ topic.navTitle }}</strong>
@@ -128,12 +152,13 @@ onBeforeUnmount(() => window.clearTimeout(copiedTimer));
           visibility="hover"
           size="thin"
           edge-fade
-          class="knote-python-guide-pane"
+          class="knote-python-guide-pane knote-guide-article"
         >
+          <Button variant="soft" color="neutral" size="sm" :prefix-icon="ArrowLeft" class="knote-guide-back" @click="showTopics">Volver al temario</Button>
           <article v-if="selectedTopic" class="knote-python-guide-detail" aria-live="polite">
             <header class="knote-python-guide-detail-head">
               <Badge variant="soft" color="secondary" size="sm">{{ selectedTopic.category }}</Badge>
-              <h2>{{ selectedTopic.title }}</h2>
+              <h2 :id="'guide-topic-' + pageId" tabindex="-1">{{ selectedTopic.title }}</h2>
               <p>{{ selectedTopic.summary }}</p>
             </header>
             <div class="knote-python-guide-when">
@@ -151,6 +176,7 @@ onBeforeUnmount(() => window.clearTimeout(copiedTimer));
               </div>
               <pre><code>{{ selectedTopic.code }}</code></pre>
             </div>
+            <p v-if="copyError" role="status">Selecciona el ejemplo para copiarlo manualmente.</p>
             <div class="knote-python-guide-actions">
               <Button variant="solid" color="primary" size="sm" :prefix-icon="Play" @click="insertExample">Insertar en el editor</Button>
               <a class="knote-python-guide-source" :href="selectedTopic.source" target="_blank" rel="noreferrer">
@@ -209,27 +235,22 @@ onBeforeUnmount(() => window.clearTimeout(copiedTimer));
 .knote-python-guide-empty-detail { display: grid; min-height: 100%; align-content: center; justify-items: center; gap: .55rem; color: var(--balsa-role-secondary); text-align: center; }
 .knote-python-guide-empty-detail strong { color: var(--balsa-role-foreground); font-size: .95rem; }
 .knote-python-guide-empty-detail span { max-width: 15rem; font-size: .76rem; line-height: 1.5; }
+.knote-guide-back { display: none; }
+.knote-python-guide-detail-head h2:focus { outline: none; }
+:global(.knote-guide-drawer) { width: min(59rem, 96vw) !important; max-width: 100vw; }
 @media (max-width: 760px) {
-  .knote-python-guide { gap: .7rem; }
-  .knote-python-guide-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(7.5rem, min(13rem, 26vh)) minmax(0, 1fr); gap: .7rem; }
-  .knote-python-guide-topics { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: .1rem .45rem .6rem 0; }
-  .knote-python-guide-section-label { grid-column: 1 / -1; }
-  .knote-python-guide-topic { min-height: 2.6rem; }
-  .knote-python-guide-detail { gap: .7rem; padding-left: 0; }
-  .knote-python-guide-detail-head { gap: .5rem; }
-  .knote-python-guide-detail-head h2 { font-size: 1.3rem; }
-  .knote-python-guide-detail-head p { font-size: .8rem; }
-}
-@media (max-width: 400px) {
-  .knote-python-guide-search { grid-template-columns: minmax(0, 1fr); gap: .35rem; }
-  .knote-python-guide-result-count { justify-self: end; padding: 0; }
-  .knote-python-guide-categories { gap: .25rem; }
-  .knote-python-guide-topic { padding-inline: .4rem; }
-  .knote-python-guide-topic-copy strong { font-size: .67rem; }
-  .knote-python-guide-actions { align-items: stretch; }
-}
-@media (max-height: 600px) and (max-width: 760px) {
-  .knote-python-guide-layout { grid-template-rows: minmax(6rem, 22vh) minmax(0, 1fr); }
+  :global(.knote-guide-drawer) { width: 100vw !important; max-height: 100dvh; }
+  .knote-python-guide { min-height: 0; }
+  .knote-python-guide-layout { display: flex; flex-direction: column; }
+  .knote-python-guide-pane { flex: 1; min-height: 0; }
+  .knote-python-guide:not(.knote-python-guide--reading) .knote-guide-article,
+  .knote-python-guide--reading .knote-guide-index, .knote-python-guide--reading .knote-python-guide-toolbar { display: none; }
+  .knote-guide-back { display: inline-flex; margin-bottom: .75rem; }
+  .knote-python-guide-detail { padding-inline: 0; }
+  .knote-python-guide-topic { min-height: 2.9rem; }
+  .knote-python-guide-topic-copy strong { font-size: .87rem; }
+  .knote-python-guide-detail-head p { font-size: .95rem; }
+  .knote-python-guide-topics { gap: .2rem; }
 }
 @media (prefers-reduced-motion: reduce) {
   .knote-python-guide-source { transition: none; }

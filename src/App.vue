@@ -3,7 +3,7 @@ import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, r
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import type { LucideIcon } from '@lucide/vue';
 import {
-  ArrowUpRight, CalendarDays, CircleAlert, CircleDot, Code2, FileText, Flag, Folder, House, LayoutDashboard,
+  ChevronRight, Download, Maximize2, Minimize2, ArrowUpRight, CalendarDays, CircleAlert, CircleDot, Code2, FileText, Flag, Folder, House, LayoutDashboard,
   Link2, ListTodo, LogIn, LogOut, Menu, MessageCircle, MoreHorizontal, NotebookPen, Paperclip, Plus, Search, Settings2,
   Star, Table2, Tag, Trash2, X,
 } from '@lucide/vue';
@@ -13,6 +13,10 @@ import Breadcrumb from '@/components/ui/Breadcrumb.vue';
 import Button from '@/components/ui/Button.vue';
 import Calendar from '@/components/ui/Calendar.vue';
 import Card from '@/components/ui/Card.vue';
+import Collapsible from '@/components/ui/Collapsible.vue';
+import TagsSelect from '@/components/workspace/DatabaseTagsSelect.vue';
+import { databaseTags, updateDatabaseTag } from '@/domain/workspace/database-tags';
+import FieldInput from '@/components/workspace/DatabaseFieldInput.vue';
 import Checkbox from '@/components/ui/Checkbox.vue';
 import CommandMenu from '@/components/ui/CommandMenu.vue';
 import DropdownMenu from '@/components/ui/DropdownMenu.vue';
@@ -45,6 +49,7 @@ import type { SidebarGroup } from '@/components/ui/Sidebar.vue';
 import { deleteBlockImage, saveBlockImage } from '@/lib/block-images';
 import { getDesktopVaultError, isDesktopRuntime } from '@/lib/desktop-vault';
 import type { WorkspaceSnapshot } from '@/lib/desktop-vault';
+import type { ImportedPdf } from '@/lib/pdf-import';
 import type { PreparedWorkspaceTransfer } from '@/lib/workspace-transfer';
 import type { BoardStatus, DatabaseViewState, PageEntry, PageType, TaskPriority, TodayTask, WorkspacePage, WorkspacePreferences } from '@/domain/workspace/types';
 import { DATABASE_VIEWS_STORAGE_KEY, defaultPreferences, PAGE_STORAGE_KEY, PREFERENCES_STORAGE_KEY, TASK_STORAGE_KEY, priorityOptions, statusOptions } from '@/domain/workspace/constants';
@@ -91,25 +96,27 @@ const preferencesTab = ref('appearance');
 const entryEditingId = ref<string | null>(null);
 const entryTitle = ref('');
 const entryTag = ref('');
+const entryTagSelection = ref<string[]>([]);
 const entryPriority = ref<TaskPriority | 'Sin prioridad'>('Media');
 const entryDue = ref('');
 const entryStatus = ref<BoardStatus>('Por hacer');
 const nonDatabaseActiveView = ref('board');
 const entryInspectorOpen = ref(false);
+const expandedTask = ref(false);
+const propertiesOpen = ref(true);
+const subtasksOpen = ref(false);
+const exportingTask = ref(false);
+watch(entryInspectorOpen, (open) => { if (!open) expandedTask.value = false; });
 const deleteEntryModalOpen = ref(false);
 const detailPageId = ref<string | null>(null);
 const detailEntryId = ref<string | null>(null);
 const entryInspectorScroll = ref<HTMLElement | null>(null);
-const detailTagsDraft = ref('');
 const newSubtaskTitle = ref('');
 const tableSubtaskComposerId = ref<string | null>(null);
 const tableSubtaskDraft = ref('');
 const newTableEntryTitle = ref('');
-const editingTagsEntryId = ref<string | null>(null);
-const databaseTagsDraft = ref('');
 const draggedEntryId = ref<string | null>(null);
 const dropTargetEntryId = ref<string | null>(null);
-const taskDescriptionEditor = ref<{ focusEnd: () => void } | null>(null);
 const createTitle = ref('');
 const createType = ref<PageType>('doc');
 const createParentId = ref<string | null>(null);
@@ -308,6 +315,7 @@ const pageMenuItems = computed<readonly MenuItem[]>(() => [
 ]);
 const detailEntryMenuItems = computed<readonly MenuItem[]>(() => [
   ...(saveState.value === 'error' ? [{ id: 'retry-save', label: 'Reintentar guardado', icon: CircleAlert }] : []),
+  { id: 'export-entry', label: 'Exportar tarea a PDF', icon: Download, disabled: exportingTask.value },
   { id: 'duplicate-entry', label: 'Duplicar tarea', icon: FileText },
   { id: 'detail-entry-menu-separator', type: 'separator' },
   { id: 'delete-entry', label: 'Eliminar tarea', icon: Trash2, destructive: true },
@@ -378,26 +386,37 @@ const cloudSaveLabel = computed(() => {
 });
 const {
   defaultDatabaseViewState, parseEntryTags, touchDetailEntry,
-  databaseQuery, databaseStatusFilter, visibleDatabaseProperties, collapsedTableEntries, activeView,
+  databaseQuery, databaseStatusFilter, databaseColumnOrder, databaseColumnWidths, visibleDatabaseProperties, collapsedTableEntries, activeView,
   detailPage, detailEntry, visibleBoardStatuses, boardViewTabs, databaseViewTabs, databaseStatusOptions,
   databaseSortItems, databasePropertyItems, entriesForStatus, databaseEntries, databaseEntryCount,
-  toggleTableEntry, openTableSubtaskComposer, addTableSubtask, updateTableSubtask, focusNewTableEntry,
+  toggleTableEntry, openTableSubtaskComposer, addTableSubtask, updateTableSubtask, visibleFields, updateFieldValue, closeEntryDetails,
   addTableEntry, handleDatabaseSort, handleDatabaseProperty, entrySubtasks, entryDescription,
   detailSubtaskProgress, entryTagsLabel, openEntryDetails, duplicateDetailEntry, deleteDetailEntry,
   updateDetailTitle, updateDetailDue, detailDateValue, detailDueIsDate, updateDetailDueFromPicker,
-  updateEntryDueFromPicker, setEntryStatus, setEntryPriority, openEntryDescription,
-  beginEntryTagsEdit, updateEntryTagsDraft, finishEntryTagsEdit, cancelEntryTagsEdit,
-  updateDetailContent, updateDetailTags, addDetailSubtask, focusNewSubtask, setDetailSubtaskTitle,
+  updateEntryDueFromPicker, setEntryStatus, setEntryPriority,
+  updateDetailContent, addDetailSubtask, focusNewSubtask, setDetailSubtaskTitle,
   setDetailSubtaskDone, removeDetailSubtask, clearCompletedSubtasks, setDetailPriority, setDetailStatus,
   handleBoardDragStart, handleBoardDragOver, dropBoardEntry, handleBoardDragEnd,
   entryDateLabel, entryCalendarDate, entriesForSelectedDate, entryDoneChanged,
 } = useDatabaseWorkspace({
   pages, selectedId, databaseViewStates, activePage, nonDatabaseActiveView, entryInspectorOpen,
-  deleteEntryModalOpen, detailPageId, detailEntryId, entryInspectorScroll, detailTagsDraft,
+  deleteEntryModalOpen, detailPageId, detailEntryId, entryInspectorScroll,
   newSubtaskTitle, tableSubtaskComposerId, tableSubtaskDraft, newTableEntryTitle,
-  editingTagsEntryId, databaseTagsDraft, draggedEntryId, dropTargetEntryId,
-  taskDescriptionEditor, selectedDate, touchPage, notify,
+  draggedEntryId, dropTargetEntryId, selectedDate, touchPage, notify,
 });
+function updateDetailTags(value: string[]) {
+  if (!detailEntry.value) return;
+  detailEntry.value.tags = value;
+  detailEntry.value.tag = value[0];
+  touchDetailEntry();
+}
+function updateDetailTagsText(value: string | number) {
+  detailTagsText.value = String(value);
+  updateDetailTags(parseEntryTags(detailTagsText.value));
+}
+const detailTagsText = ref('');
+watch([detailEntryId, entryInspectorOpen], () => { detailTagsText.value = detailEntry.value ? entryTags(detailEntry.value).join(', ') : ''; });
+watch(detailEntryId, () => { subtasksOpen.value = false; });
 function setActive(id: string, updateHistory = true): void {
   if (id !== 'home' && !pages.value.some((page) => page.id === id)) id = 'home';
   entryInspectorOpen.value = false;
@@ -477,7 +496,8 @@ function openEntryModal(status: BoardStatus = 'Por hacer', entry?: PageEntry): v
   if (!page) return;
   entryEditingId.value = entry?.id ?? null;
   entryTitle.value = entry?.title ?? '';
-  entryTag.value = entry ? entryTags(entry).join(', ') : '';
+  entryTagSelection.value = entry ? entryTags(entry) : [];
+  entryTag.value = entryTagSelection.value.join(', ');
   entryPriority.value = entry?.priority ?? (entry ? 'Sin prioridad' : 'Media');
   entryDue.value = entry?.due ?? (page.type === 'calendar' && selectedDate.value instanceof Date ? dateInputValue(selectedDate.value) : '');
   entryStatus.value = page.type === 'calendar' || page.type === 'tasks' ? 'Por hacer' : entry?.status ?? status;
@@ -490,18 +510,18 @@ function saveEntry(close?: () => void): void {
     notify('Falta un nombre', 'Escribe un título para guardar este elemento.', 'warning');
     return;
   }
+  const tags = page.type === 'database' || page.type === 'board' ? entryTagSelection.value : parseEntryTags(entryTag.value);
   const selectedPriority: TaskPriority | undefined = entryPriority.value === 'Sin prioridad' ? undefined : entryPriority.value;
   const existing = entryEditingId.value ? page.entries.find((entry) => entry.id === entryEditingId.value) : undefined;
   if (existing) {
     existing.title = title;
-    existing.tags = parseEntryTags(entryTag.value);
+    existing.tags = tags;
     existing.tag = existing.tags[0];
     existing.priority = selectedPriority;
     existing.due = entryDue.value.trim() || undefined;
     if (page.type === 'tasks') existing.done = Boolean(existing.done);
     else existing.status = entryStatus.value;
   } else {
-    const tags = parseEntryTags(entryTag.value);
     page.entries.unshift({
       id: makeId(), title, tag: tags[0], tags, priority: selectedPriority,
       due: entryDue.value.trim() || undefined, status: entryStatus.value, content: '',
@@ -518,12 +538,13 @@ function defaultEntries(type: PageType): PageEntry[] {
   void type;
   return [];
 }
-function submitNewPage(close?: () => void): void {
+function submitNewPage(close?: () => void, pdf?: ImportedPdf): void {
+  if (pdf) createType.value = 'doc';
   const titles: Record<PageType, string> = { folder: 'Nueva carpeta', doc: 'Sin título', code: 'Python', board: 'Nuevo tablero', database: 'Nueva tabla', calendar: 'Calendario', tasks: 'Lista de tareas' };
-  const title = createTitle.value.trim() || titles[createType.value];
+  const title = createTitle.value.trim().slice(0, 500) || pdf?.title || titles[createType.value];
   const timestamp = Date.now();
   const page: WorkspacePage = {
-    id: makeId(), title, type: createType.value, parentId: createParentId.value, content: createType.value === 'code' ? 'print("Hola desde KNote")' : '',
+    id: makeId(), title, type: createType.value, parentId: createParentId.value, content: pdf?.content ?? (createType.value === 'code' ? 'print("Hola desde KNote")' : ''),
     favorite: false, createdAt: timestamp, updatedAt: timestamp, entries: defaultEntries(createType.value),
   };
   pages.value.unshift(page);
@@ -531,7 +552,8 @@ function submitNewPage(close?: () => void): void {
   close?.();
   setActive(page.id);
   persist();
-  notify('Página creada', title + ' ya está en tu espacio.');
+  if (pdf) notify('PDF importado', pdf.scannedPages ? `Se conservaron como imagen ${pdf.scannedPages} páginas sin texto seleccionable.` : title);
+  else notify('Página creada', title + ' ya está en tu espacio.');
 }
 function captureQuickNote(): void {
   const content = quickCapture.value.trim();
@@ -590,7 +612,18 @@ function onPageMenu(selection: MenuSelection): void {
   if (selection.id === 'copy-local-link') void copyCurrentLink();
   if (selection.id === 'delete') deleteCurrentPage();
 }
-function onDetailEntryMenu(selection: MenuSelection): void {
+async function onDetailEntryMenu(selection: MenuSelection): Promise<void> {
+  if (selection.id === 'export-entry' && detailPage.value && detailEntry.value && !exportingTask.value) {
+    const page = detailPage.value;
+    const entry = detailEntry.value;
+    exportingTask.value = true;
+    try {
+      const { downloadPagePdf } = await import('@/lib/pdf-export');
+      await downloadPagePdf(page, entry);
+    } catch (cause) {
+      notify('No se pudo exportar la tarea', cause instanceof Error ? cause.message : 'Vuelve a intentarlo.', 'warning');
+    } finally { exportingTask.value = false; }
+  }
   if (selection.id === 'retry-save') persist();
   if (selection.id === 'duplicate-entry') duplicateDetailEntry();
   if (selection.id === 'delete-entry') deleteEntryModalOpen.value = true;
@@ -733,6 +766,7 @@ function removeToast(item: ToastItem): void { toasts.value = toasts.value.filter
 function onGlobalKeydown(event: KeyboardEvent): void {
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'n') { event.preventDefault(); openCreatePage(); }
   if (event.key === 'Escape') {
+    if (entryInspectorOpen.value && !event.defaultPrevented && !document.querySelector('dialog[open], [popover]:popover-open, [role="listbox"], [role="menu"]') && !deleteEntryModalOpen.value && !commandOpen.value) closeEntryDetails();
     mobileSidebarOpen.value = false;
     sidebarCollapsed.value = true;
     preferencesOpen.value = false;
@@ -988,6 +1022,7 @@ onBeforeUnmount(() => {
     </Modal>
 
     <PageShareDialog
+      :child-titles="activePage?.type === 'folder' ? pages.filter((item) => item.parentId === activePage?.id).map((item) => item.title) : []"
       v-model="shareDialogOpen"
       :page="activePage"
       :signed-in="Boolean(karmancosProfile)"
@@ -1004,7 +1039,7 @@ onBeforeUnmount(() => {
       @choose="resolveCloudChoice"
     />
 
-    <div class="knote-main" :class="{ 'knote-main--inspector': entryInspectorOpen && Boolean(detailEntry && detailPage) }">
+    <div class="knote-main" :class="{ 'knote-main--inspector': entryInspectorOpen && Boolean(detailEntry && detailPage), 'knote-main--task-page': entryInspectorOpen && expandedTask }">
       <header class="knote-topbar" :class="{ 'knote-topbar--writing': activePage?.type === 'doc' }">
         <div class="knote-topbar-left">
           <Button class="knote-mobile-nav" variant="glass" color="neutral" size="sm" :prefix-icon="Menu" aria-label="Abrir navegación" @click="mobileSidebarOpen = true" />
@@ -1149,7 +1184,7 @@ onBeforeUnmount(() => {
               </div>
             </template>
 
-            <DatabaseWorkspace v-else-if="activePage.type === 'board' || activePage.type === 'database'"
+            <DatabaseWorkspace :key="activePage.id" v-else-if="activePage.type === 'board' || activePage.type === 'database'"
               v-model:active-view="activeView"
               v-model:database-query="databaseQuery"
               v-model:database-status-filter="databaseStatusFilter"
@@ -1157,8 +1192,8 @@ onBeforeUnmount(() => {
               v-model:table-subtask-composer-id="tableSubtaskComposerId"
               v-model:table-subtask-draft="tableSubtaskDraft"
               v-model:new-table-entry-title="newTableEntryTitle"
-              v-model:editing-tags-entry-id="editingTagsEntryId"
-              v-model:database-tags-draft="databaseTagsDraft"
+              v-model:column-order="databaseColumnOrder"
+              v-model:column-widths="databaseColumnWidths"
               :active-page="activePage"
               :visible-board-statuses="visibleBoardStatuses"
               :board-view-tabs="boardViewTabs"
@@ -1182,7 +1217,6 @@ onBeforeUnmount(() => {
               :entry-date-label="entryDateLabel"
               :entry-calendar-date="entryCalendarDate"
               :entry-tags="entryTags"
-              :entry-tags-label="entryTagsLabel"
               :handle-board-drag-start="handleBoardDragStart"
               :handle-board-drag-over="handleBoardDragOver"
               :drop-board-entry="dropBoardEntry"
@@ -1192,33 +1226,35 @@ onBeforeUnmount(() => {
               :set-entry-status="setEntryStatus"
               :set-entry-priority="setEntryPriority"
               :update-entry-due-from-picker="updateEntryDueFromPicker"
-              :update-entry-tags-draft="updateEntryTagsDraft"
-              :finish-entry-tags-edit="finishEntryTagsEdit"
-              :cancel-entry-tags-edit="cancelEntryTagsEdit"
-              :begin-entry-tags-edit="beginEntryTagsEdit"
               :update-table-subtask="updateTableSubtask"
               :toggle-table-entry="toggleTableEntry"
               :open-table-subtask-composer="openTableSubtaskComposer"
               :add-table-subtask="addTableSubtask"
               :add-table-entry="addTableEntry"
-              :open-entry-description="openEntryDescription"
               :handle-database-sort="handleDatabaseSort"
               :handle-database-property="handleDatabaseProperty"
-              :focus-new-table-entry="focusNewTableEntry"
+              @set-entries="(entries) => { if (activePage) { activePage.entries = entries; touchPage(activePage); } }"
+              @set-fields="(fields) => { if (activePage) { activePage.fields = fields; touchPage(activePage); } }"
+              @set-tag="(former, next) => { if (activePage) { updateDatabaseTag(activePage, former, next); touchPage(activePage); } }"
+              @description-conflict="notify('Se actualizó la descripción', 'Abre la celda de nuevo para editar la última versión.', 'warning')"
+              :visible-fields="visibleFields"
+              :touch-page="touchPage"
+              :update-field-value="updateFieldValue"
             />
           </template>
         </template>
       </main>
 
       <aside v-if="entryInspectorOpen && detailEntry && detailPage" class="knote-entry-inspector" :aria-label="'Editar ' + detailEntry.title">
-        <Card variant="surface" padding="none" class="knote-entry-inspector-card" role="region" aria-labelledby="entry-inspector-heading">
-          <header class="knote-entry-inspector-header">
-            <div><span class="knote-overline">DETALLE DE TAREA</span><small>{{ detailPage.title }}</small></div>
+        <Card variant="surface" padding="none" class="knote-entry-inspector-card" :aria-label="detailEntry.title" role="region">
+          <header id="task-document-header" tabindex="-1" class="knote-entry-inspector-header">
+            <div class="knote-task-path"><Icon :icon="pageIcon(detailPage)" size="sm" /><small>{{ detailPage.title }}</small><Icon :icon="ChevronRight" size="xs" /><span>Tarea</span></div>
             <div class="knote-entry-inspector-header-actions">
+              <Button class="knote-task-expand" variant="soft" color="neutral" size="sm" shape="rounded" :prefix-icon="expandedTask ? Minimize2 : Maximize2" :aria-label="expandedTask ? 'Volver al panel lateral' : 'Ampliar página de tarea'" :title="expandedTask ? 'Volver al panel lateral' : 'Ampliar página de tarea'" @click="expandedTask = !expandedTask" />
               <DropdownMenu id="entry-detail-actions" label="Acciones de la tarea" side="bottom" align="end" variant="surface" color="neutral" rounded="lg" class="knote-task-detail-menu" :items="detailEntryMenuItems" @select="onDetailEntryMenu">
                 <template #trigger><Icon :icon="MoreHorizontal" size="sm" /><span class="sr-only">Acciones de la tarea</span></template>
               </DropdownMenu>
-              <Button variant="soft" color="neutral" size="sm" shape="fab" :prefix-icon="X" aria-label="Cerrar panel de tarea" title="Cerrar panel" @click="entryInspectorOpen = false" />
+              <Button variant="soft" color="neutral" size="sm" shape="rounded" :prefix-icon="X" aria-label="Cerrar panel de tarea" title="Cerrar panel" @click="closeEntryDetails" />
             </div>
           </header>
           <div ref="entryInspectorScroll" class="knote-entry-inspector-scroll">
@@ -1227,8 +1263,7 @@ onBeforeUnmount(() => {
               <Input id="entry-detail-title" :model-value="detailEntry.title" label="Título de la tarea" placeholder="Sin título" size="md" variant="surface" class="knote-entry-inspector-title" @update:model-value="updateDetailTitle" />
             </div>
 
-            <section class="knote-inspector-section">
-              <div class="knote-inspector-section-heading knote-detail-properties-heading"><h2 id="entry-inspector-heading">Propiedades de {{ detailEntry.title }}</h2></div>
+            <Collapsible id="task-properties" v-model="propertiesOpen" title="Propiedades" size="sm" class="knote-task-disclosure">
               <div class="knote-entry-detail-properties">
                 <div v-if="detailPage.type !== 'calendar' && detailPage.type !== 'tasks'" class="knote-detail-property-row">
                   <Icon :icon="CircleDot" size="sm" class="knote-detail-property-icon" aria-hidden="true" />
@@ -1245,36 +1280,41 @@ onBeforeUnmount(() => {
                 </div>
                 <div class="knote-detail-property-row">
                   <Icon :icon="Tag" size="sm" class="knote-detail-property-icon" aria-hidden="true" />
-                  <Input id="entry-detail-tags" :model-value="detailTagsDraft" label="Etiquetas" placeholder="Añadir etiquetas…" size="sm" variant="surface" @update:model-value="updateDetailTags" />
+                  <TagsSelect v-if="detailPage.type === 'board' || detailPage.type === 'database'" id="entry-detail-tags" label="Etiquetas"
+                    :tags="entryTags(detailEntry)" :options="databaseTags(detailPage)" @change="updateDetailTags" />
+                  <Input v-else id="entry-detail-tags" :model-value="detailTagsText" label="Etiquetas" placeholder="Añadir etiquetas…" size="sm" variant="surface" @update:model-value="updateDetailTagsText" />
                 </div>
-                <div class="knote-detail-property-row knote-detail-subtasks-row">
-                  <Icon :icon="ListTodo" size="sm" class="knote-detail-property-icon" aria-hidden="true" />
-                  <span class="knote-detail-property-label" aria-hidden="true">Subtareas</span>
-                  <div class="knote-detail-property-value">
-                    <div class="knote-subtask-tools">
-                      <Badge variant="outline" color="secondary" size="sm">{{ detailSubtaskProgress.done }} / {{ detailSubtaskProgress.total }}</Badge>
-                      <Button v-if="detailSubtaskProgress.done" variant="soft" color="neutral" size="sm" :prefix-icon="Trash2" title="Quitar subtareas completadas" @click="clearCompletedSubtasks">Limpiar hechas</Button>
-                    </div>
-                    <div class="knote-subtask-composer">
-                      <Input id="entry-detail-new-subtask" v-model="newSubtaskTitle" label="Escribe una subtarea" placeholder="Añadir una subtarea…" size="sm" variant="surface" @keydown.enter.prevent="addDetailSubtask" />
-                      <Button variant="glass" color="neutral" size="sm" :prefix-icon="Plus" aria-label="Añadir subtarea" title="Añadir subtarea" class="knote-subtask-add" @click="addDetailSubtask">Añadir</Button>
-                    </div>
-                    <ul v-if="entrySubtasks(detailEntry).length" class="knote-detail-subtask-list">
-                      <li v-for="(subtask, index) in entrySubtasks(detailEntry)" :key="subtask.id" class="knote-detail-subtask" :class="{ 'knote-detail-subtask--done': subtask.done }">
-                        <Checkbox :id="'entry-subtask-check-' + subtask.id" :model-value="subtask.done" :label="'Marcar como hecha: ' + subtask.title" size="sm" variant="surface" class="knote-subtask-toggle" @update:model-value="(done) => setDetailSubtaskDone(subtask.id, done)" />
-                        <Input :id="'entry-subtask-title-' + subtask.id" :model-value="subtask.title" :label="'Nombre de subtarea ' + (index + 1)" size="sm" variant="surface" class="knote-subtask-name" @update:model-value="(title) => setDetailSubtaskTitle(subtask.id, String(title))" @keydown.enter.stop.prevent="focusNewSubtask" />
-                        <Button variant="soft" color="neutral" size="sm" shape="fab" :prefix-icon="Trash2" :aria-label="'Eliminar subtarea ' + subtask.title" title="Eliminar subtarea" class="knote-subtask-remove" @click="removeDetailSubtask(subtask.id)" />
-                      </li>
-                    </ul>
-                    <p v-else class="knote-subtask-empty">Todavía no hay subtareas.</p>
-                  </div>
+                <div v-for="field in detailPage.fields" :key="field.id" class="knote-detail-property-row knote-detail-custom-field">
+                  <Icon :icon="field.type === 'checkbox' ? ListTodo : FileText" size="sm" class="knote-detail-property-icon" aria-hidden="true" />
+                  <FieldInput :id="'detail-' + field.id" :field="field" :entry="detailEntry" @change="(value) => detailPage && detailEntry && updateFieldValue(detailPage, detailEntry, field, value)" />
                 </div>
               </div>
-            </section>
+            </Collapsible>
+            <Collapsible id="task-subtasks" v-model="subtasksOpen" :title="'Subtareas · ' + detailSubtaskProgress.done + ' / ' + detailSubtaskProgress.total" size="sm" class="knote-task-disclosure">
+              <div class="knote-task-checklist">
+                <ul v-if="entrySubtasks(detailEntry).length" class="knote-task-checklist-items">
+                  <li v-for="(subtask, index) in entrySubtasks(detailEntry)" :key="subtask.id" :class="{ 'is-complete': subtask.done }">
+                    <Checkbox :id="'entry-subtask-check-' + subtask.id" :model-value="subtask.done" :label="'Completar ' + subtask.title"
+                      size="sm" rounded="sm" variant="outline" class="knote-subtask-tick" @update:model-value="setDetailSubtaskDone(subtask.id, $event)" />
+                    <Input :id="'entry-subtask-title-' + subtask.id" :model-value="subtask.title" :label="'Nombre de subtarea ' + (index + 1)"
+                      size="sm" variant="surface" class="knote-subtask-text" @update:model-value="setDetailSubtaskTitle(subtask.id, String($event))"
+                      @keydown.enter.stop.prevent="focusNewSubtask" />
+                    <Button variant="soft" color="neutral" size="sm" :prefix-icon="X"
+                      :aria-label="'Eliminar subtarea ' + subtask.title" class="knote-task-remove-child" @click="removeDetailSubtask(subtask.id)" />
+                  </li>
+                </ul>
+                <form class="knote-sheet-inline-form" @submit.prevent="addDetailSubtask">
+                  <Icon :icon="Plus" size="sm" />
+                  <Input id="entry-detail-new-subtask" v-model="newSubtaskTitle" label="Nueva subtarea" placeholder="Nueva subtarea" size="sm" variant="surface" />
+                  <Button v-if="newSubtaskTitle.trim()" type="submit" variant="soft" color="neutral" size="sm">Añadir</Button>
+                </form>
+                <Button v-if="detailSubtaskProgress.done" variant="soft" color="neutral" size="sm" class="knote-task-clear-checked" @click="clearCompletedSubtasks">Quitar completadas</Button>
+              </div>
+            </Collapsible>
 
             <section class="knote-inspector-section knote-entry-detail-content">
-              <div class="knote-inspector-section-heading"><h2>Descripción</h2></div>
-              <BlockEditor ref="taskDescriptionEditor" :key="'detail-' + detailEntry.id" :model-value="detailEntry.content || ''" :page-id="'detail-' + detailEntry.id" placeholder="Escribe una descripción…" class="knote-task-detail-editor" @update:model-value="updateDetailContent" />
+              <div class="knote-inspector-section-heading"><h2>Documento</h2><span class="knote-document-save-status" :data-state="saveState">{{ cloudSaveLabel }}</span></div>
+              <BlockEditor :key="'detail-' + detailEntry.id" :model-value="detailEntry.content || ''" :page-id="'detail-' + detailEntry.id" placeholder="Escribe o usa / para insertar un bloque…" class="knote-task-detail-editor" @update:model-value="updateDetailContent" />
             </section>
           </div>
         </Card>
@@ -1290,6 +1330,7 @@ onBeforeUnmount(() => {
         :parent-id="createParentId"
         :page-type-label="pageTypeLabel"
         @submit="submitNewPage"
+        @import-pdf="(pdf) => submitNewPage(undefined, pdf)"
       />
 
             <WorkspacePreferencesDialog
@@ -1311,6 +1352,7 @@ onBeforeUnmount(() => {
         v-model:entry-status="entryStatus"
         v-model:entry-due="entryDue"
         v-model:entry-tag="entryTag"
+        v-model:entry-tag-selection="entryTagSelection"
         v-model:entry-priority="entryPriority"
         :active-page="activePage"
         :dialog-title="entryDialogTitle"

@@ -396,10 +396,17 @@ function clearConsole(): void {
 function insertPythonExample(code: string): void {
   const view = editor.value;
   if (!view) return;
-  const { from, to } = view.state.selection.main;
+  const selection = view.state.selection.main;
+  const line = view.state.doc.lineAt(selection.from);
+  // A complete example belongs on its own lines, even when the caret is inside a statement.
+  const from = selection.empty && selection.from > line.from ? line.to : selection.from;
+  const to = selection.empty ? from : selection.to;
+  const prefix = from > view.state.doc.lineAt(from).from ? '\n' : '';
+  const suffix = to < view.state.doc.lineAt(to).to ? '\n' : '';
+  const insert = prefix + code + suffix;
   view.dispatch({
-    changes: { from, to, insert: code },
-    selection: { anchor: from + code.length },
+    changes: { from, to, insert },
+    selection: { anchor: from + prefix.length + code.length },
     userEvent: 'input.type',
   });
   view.focus();

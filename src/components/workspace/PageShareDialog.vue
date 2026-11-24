@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
-import { Copy, Link2, LockKeyhole, Globe2, RotateCw } from '@lucide/vue';
+import { Copy, Download, Link2, LockKeyhole, Globe2, RotateCw } from '@lucide/vue';
 import Badge from '@/components/ui/Badge.vue';
 import Button from '@/components/ui/Button.vue';
 import Icon from '@/components/ui/Icon.vue';
@@ -11,6 +11,7 @@ import { fetchCloudShare, publishCloudPage, unpublishCloudPage } from '@/lib/clo
 const props = defineProps<{
   modelValue: boolean;
   page: WorkspacePage | null;
+  childTitles?: string[];
   signedIn: boolean;
   cloudActive: boolean;
   saveState: 'saved' | 'saving' | 'pending' | 'conflict' | 'error';
@@ -25,6 +26,18 @@ const share = ref<{ published: boolean; url: string | null } | null>(null);
 const published = computed(() => share.value?.published === true);
 const url = computed(() => share.value?.url ?? null);
 const busy = ref(false);
+const exporting = ref(false);
+async function exportPdf() {
+  if (!props.page || exporting.value) return;
+  exporting.value = true;
+  const page = props.page;
+  try {
+    const { downloadPagePdf } = await import('@/lib/pdf-export');
+    await downloadPagePdf(page, undefined, props.childTitles);
+  } catch (cause) {
+    emit('notify', 'No se pudo exportar el PDF', cause instanceof Error ? cause.message : 'Vuelve a intentarlo.', 'warning');
+  } finally { exporting.value = false; }
+}
 const error = ref('');
 const isDocument = computed(() => props.page?.type === 'doc');
 const canReadShare = computed(() => props.modelValue && props.signedIn && props.cloudActive && isDocument.value);
@@ -119,7 +132,7 @@ async function unpublish(): Promise<void> {
     id="page-share-dialog"
     :model-value="modelValue"
     title="Compartir documento"
-    description="Los documentos son privados hasta que los publiques. El enlace no aparece en búsquedas y puedes revocarlo."
+    description="Descarga una copia en PDF o comparte el documento mediante un enlace."
     variant="glass"
     size="md"
     close-label="Cerrar opciones de publicación"
@@ -133,6 +146,7 @@ async function unpublish(): Promise<void> {
       <strong>{{ page?.title || 'Sin título' }}</strong>
     </div>
 
+    <p v-if="page?.type === 'database' || page?.type === 'board'" class="knote-cloud-dialog-note">El PDF incluye la tabla completa y el documento de cada tarea.</p>
     <p v-if="!signedIn" class="knote-cloud-dialog-note">Inicia sesión para sincronizar y publicar documentos. Tus cambios locales se conservan.</p>
     <p v-else-if="!cloudActive" class="knote-cloud-dialog-note">No se puede comprobar la publicación ni crear enlaces hasta recuperar la conexión con la nube. Tus cambios locales se conservan.</p>
     <p v-else-if="!isDocument" class="knote-cloud-dialog-note">Solo se pueden publicar documentos de texto. Esta página sigue siendo privada.</p>
@@ -151,6 +165,7 @@ async function unpublish(): Promise<void> {
       <Button v-else-if="canReadShare && !share && error" variant="soft" color="neutral" :prefix-icon="RotateCw" @click="refresh">Volver a comprobar</Button>
       <Button v-else-if="published" variant="soft" color="destructive" :loading="busy" :disabled="busy" @click="unpublish">Poner en privado</Button>
       <Button v-else variant="solid" color="primary" :prefix-icon="Globe2" :loading="busy" :disabled="!canPublish" @click="publish">Publicar y copiar enlace</Button>
+      <Button v-if="page" variant="outline" color="neutral" :prefix-icon="Download" :loading="exporting" :disabled="exporting" @click="exportPdf">Exportar PDF</Button>
     </template>
   </Modal>
 </template>

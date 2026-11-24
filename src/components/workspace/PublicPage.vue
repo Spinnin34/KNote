@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { ArrowLeft, RotateCw } from '@lucide/vue';
 import Button from '@/components/ui/Button.vue';
+import { refreshDocumentOutline } from '@/components/block-editor/outline';
 import { initialHtml } from '@/components/block-editor/content';
 
 interface PublicDocument { title: string; content: string; banner: string | null }
@@ -60,6 +61,7 @@ function renderSafeContent(content: string): string {
     scroller.append(table);
     block.replaceWith(scroller);
   });
+  refreshDocumentOutline(template.content, 'public');
   return template.innerHTML;
 }
 

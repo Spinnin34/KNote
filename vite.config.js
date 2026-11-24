@@ -1,5 +1,6 @@
 import { defineConfig, loadEnv } from 'vite';
 import tailwindcss from '@tailwindcss/vite';
+import { viteStaticCopy } from 'vite-plugin-static-copy';
 import vue from '@vitejs/plugin-vue';
 import { fileURLToPath } from 'node:url';
 
@@ -85,7 +86,12 @@ export default defineConfig(({ mode }) => {
   }
 
   return {
-    plugins: [vue(), tailwindcss(), localKarmancosAuth()],
+    plugins: [
+      vue(), tailwindcss(), localKarmancosAuth(),
+      viteStaticCopy({ targets: ['cmaps', 'standard_fonts', 'wasm', 'iccs'].map((name) => ({
+        src: `node_modules/pdfjs-dist/${name}`, dest: 'pdf-resources', rename: { stripBase: 2 },
+      })) }),
+    ],
     server: {
       strictPort: true,
       headers: {

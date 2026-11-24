@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import TagsSelect from './DatabaseTagsSelect.vue';
+import { databaseTags } from '@/domain/workspace/database-tags';
 import Button from '@/components/ui/Button.vue';
 import Input from '@/components/ui/Input.vue';
 import Modal from '@/components/ui/Modal.vue';
@@ -14,6 +16,7 @@ const title = defineModel<string>('entryTitle', { required: true });
 const status = defineModel<BoardStatus>('entryStatus', { required: true });
 const due = defineModel<string>('entryDue', { required: true });
 const tag = defineModel<string>('entryTag', { required: true });
+const tags = defineModel<string[]>('entryTagSelection', { required: true });
 const priority = defineModel<TaskPriority | 'Sin prioridad'>('entryPriority', { required: true });
 const emit = defineEmits<{ save: [] }>();
 
@@ -31,7 +34,8 @@ const entryStatusTabs = [
       <Tabs v-if="activePage && activePage.type !== 'calendar' && activePage.type !== 'tasks'" id="page-entry-status" v-model="status" :items="entryStatusTabs" label="Estado del elemento" type="pills" variant="glass" size="sm" :panel-surface="false" />
       <div class="knote-entry-fields">
         <Input id="page-entry-due" v-model="due" label="Fecha" placeholder="Hoy, 10 oct o AAAA-MM-DD" />
-        <Input id="page-entry-tag" v-model="tag" label="Etiquetas" placeholder="Diseño, personal…" hint="Separa las etiquetas con comas." />
+        <TagsSelect v-if="activePage && (activePage.type === 'database' || activePage.type === 'board')" id="page-entry-tags" label="Etiquetas" :tags="tags" :options="databaseTags(activePage)" @change="tags = $event" />
+        <Input v-else id="page-entry-tag" v-model="tag" label="Etiquetas" placeholder="Diseño, personal…" hint="Separa las etiquetas con comas." />
         <Select id="page-entry-priority" v-model="priority" label="Prioridad" :options="priorityOptions" size="sm" variant="surface" />
       </div>
     </div>

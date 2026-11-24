@@ -82,7 +82,7 @@
 .knote-board-column-title { padding: .35rem .4rem .7rem; border-bottom-color: color-mix(in oklab, var(--balsa-role-foreground) 9%, transparent); }
 .knote-board-cards { min-height: 24rem; gap: .45rem; padding: 0 .12rem; }
 .knote-board-card { padding: .82rem !important; border-color: color-mix(in oklab, var(--balsa-role-foreground) 8%, transparent) !important; border-radius: .65rem !important; background: color-mix(in oklab, var(--balsa-role-background) 70%, var(--balsa-role-surface)) !important; box-shadow: none !important; }
-.knote-board-card:hover { border-color: color-mix(in oklab, var(--balsa-role-foreground) 18%, transparent) !important; background: color-mix(in oklab, var(--balsa-role-surface) 82%, var(--balsa-role-background)) !important; transform: translateY(-1px); }
+.knote-board-card:hover { border-color: color-mix(in oklab, var(--balsa-role-foreground) 18%, transparent) !important; background: color-mix(in oklab, var(--balsa-role-surface) 82%, var(--balsa-role-background)) !important; }
 .knote-board-subtasks { display: grid; gap: .22rem; margin: .45rem 0 .15rem; padding-left: .08rem; color: var(--balsa-role-secondary); font-size: .7rem; }
 .knote-board-subtasks > span { display: flex; min-width: 0; align-items: flex-start; gap: .34rem; line-height: 1.4; }
 .knote-board-subtasks > span [data-balsa="icon"] { flex: 0 0 auto; margin-top: .08rem; }

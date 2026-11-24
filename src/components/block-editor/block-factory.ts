@@ -70,6 +70,18 @@ export function createBlock(id: string): HTMLElement {
     block.append(blankElement('code'));
     return block;
   }
+  if (id === 'block:page-break') return Object.assign(document.createElement('hr'), { className: 'knote-page-break' });
+  if (id === 'block:definition') {
+    const definition = document.createElement('dl');
+    definition.append(Object.assign(document.createElement('dt'), { textContent: 'Término' }), blankElement('dd'));
+    return definition;
+  }
+  if (id === 'block:toc') {
+    const toc = document.createElement('div');
+    toc.className = 'knote-toc';
+    toc.contentEditable = 'false';
+    return toc;
+  }
   if (id === 'block:divider') return document.createElement('hr');
   if (id === 'block:toggle') {
     const details = document.createElement('details');
