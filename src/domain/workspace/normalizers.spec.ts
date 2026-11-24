@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { normalizeDatabaseViewStates, normalizePages, normalizeTodayTasks } from '@/domain/workspace/normalizers';
 import { databaseTags, updateDatabaseTag } from '@/domain/workspace/database-tags';
+import { taskPath, walkTasks } from '@/domain/workspace/task-tree';
 import { samplePages } from '@/domain/workspace/samples';
 
 describe('workspace normalizers', () => {
@@ -66,6 +67,24 @@ describe('workspace normalizers', () => {
         { id: 'saved-entry-sub-1', title: 'siguiente', done: true },
       ],
     });
+  });
+
+  it('preserves nested tasks and their documents, properties and completion independently', () => {
+    const [page] = normalizePages([{
+      id: 'roadmap', title: 'Hoja de ruta', type: 'database', entries: [{ id: 'root', title: 'Entrega', subtasks: [{
+        id: 'child', title: 'Diseño', done: true, status: 'En curso', content: 'Plan y referencias', due: '2026-11-27',
+        subtasks: [{ id: 'grandchild', title: 'Revisión', status: 'Hecho', tags: ['Interfaz'], priority: 'Alta', fields: { 'field-review': true } }],
+      }] }],
+    }]);
+    expect(taskPath(page.entries, 'grandchild').map((entry) => entry.id)).toEqual(['root', 'child', 'grandchild']);
+    const [, child, grandchild] = Array.from(walkTasks(page.entries));
+    expect(child).toMatchObject({ done: true, status: 'En curso', content: 'Plan y referencias', due: '2026-11-27' });
+    expect(grandchild).toMatchObject({ done: false, status: 'Hecho', tags: ['Interfaz'], priority: 'Alta', fields: { 'field-review': true } });
+    updateDatabaseTag(page, 'Interfaz', 'Diseño');
+    const [reloaded] = normalizePages(JSON.parse(JSON.stringify([page])));
+    expect(taskPath(reloaded.entries, 'grandchild').at(-1)?.tags).toEqual(['Diseño']);
+    child.title = '';
+    expect(normalizePages([page])[0].entries[0].subtasks?.[0].content).toBe('Plan y referencias');
   });
 
   it('filters invalid daily tasks and constrains saved view state', () => {

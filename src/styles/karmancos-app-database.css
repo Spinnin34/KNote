@@ -182,7 +182,7 @@
 .knote-board-subtasks > span > span { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 1; }
 .knote-board-subtasks > span [data-balsa="icon"] { flex: 0 0 auto; }
 .knote-board-subtasks > small { padding-left: 1.13rem; }
-.knote-subtask-is-done { color: var(--balsa-role-secondary); opacity: .72; text-decoration: line-through; }
+.knote-subtask-is-done { color: var(--balsa-role-secondary); }
 
 @media (max-width: 1080px) {
   .knote-main--inspector { grid-template-columns: minmax(0, 1fr); }

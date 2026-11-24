@@ -1,3 +1,4 @@
+import { walkTasks } from '@/domain/workspace/task-tree';
 import { onBeforeUnmount, ref, type Ref } from 'vue';
 import type { ToastItem } from '@/components/ui/ToastViewport.vue';
 import type { DatabaseViewState, TodayTask, WorkspacePage, WorkspacePreferences } from '@/domain/workspace/types';
@@ -114,7 +115,7 @@ function assetIds(snapshot: CloudSnapshot): string[] {
     const banner = page.banner?.match(/^knote-asset:([\da-f-]{20,64})$/i);
     if (banner) ids.add(banner[1]);
     collectContent(page.content);
-    page.entries?.forEach((entry) => collectContent(entry.content));
+    for (const entry of walkTasks(page.entries)) collectContent(entry.content);
   }
   return [...ids];
 }

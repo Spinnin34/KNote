@@ -1,3 +1,4 @@
+import { walkTasks } from '@/domain/workspace/task-tree';
 import { ref, type ComputedRef, type Ref } from 'vue';
 import type { ToastItem } from '@/components/ui/ToastViewport.vue';
 import type { DatabaseViewState, TodayTask, WorkspacePage, WorkspacePreferences } from '@/domain/workspace/types';
@@ -55,7 +56,7 @@ export function useWorkspacePersistence(options: WorkspacePersistenceOptions) {
           const page = value as Partial<WorkspacePage>;
           collect(page.banner);
           collect(page.content);
-          page.entries?.forEach((entry) => collect(entry.content));
+          for (const entry of walkTasks(page.entries)) collect(entry.content);
         });
       };
       collectPages(pages.value);

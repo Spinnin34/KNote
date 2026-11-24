@@ -6,6 +6,7 @@ import type { ToastItem } from '@/components/ui/ToastViewport.vue';
 import type { BoardStatus, DatabaseField, DatabaseFilter, DatabaseProperty, DatabaseSort, DatabaseViewState, PageEntry, PageSubtask, TaskPriority, WorkspacePage } from '@/domain/workspace/types';
 import { BOARD_STATUSES, DEFAULT_DATABASE_PROPERTIES, TASK_PRIORITIES } from '@/domain/workspace/constants';
 import { entryTags } from '@/domain/workspace/normalizers';
+import { taskPath } from '@/domain/workspace/task-tree';
 import { makeId } from '@/domain/workspace/ids';
 
 type DatabaseWorkspaceContext = {
@@ -97,7 +98,9 @@ const activeView = computed({
   },
 });
 const detailPage = computed(() => pages.value.find((page) => page.id === detailPageId.value) ?? null);
-const detailEntry = computed(() => detailPage.value?.entries.find((entry) => entry.id === detailEntryId.value) ?? null);
+const detailEntryPath = computed(() => detailPage.value && detailEntryId.value ? taskPath(detailPage.value.entries, detailEntryId.value) : []);
+const detailEntry = computed(() => detailEntryPath.value.at(-1) ?? null);
+const detailParent = computed(() => detailEntryPath.value.at(-2) ?? null);
 
 const boardStatuses = BOARD_STATUSES;
 const visibleBoardStatuses = computed(() => {
@@ -164,19 +167,54 @@ function sortDatabaseEntries(entries: PageEntry[], pageId = selectedId.value): P
   }
   return result;
 }
-const databaseEntries = computed(() => {
+function matchesDatabaseEntry(entry: PageEntry, filter: DatabaseFilter, query: string): boolean {
+  if (filter !== 'Todas' && filter !== entry.status) return false;
+  if (!query) return true;
+  return [entry.title, entry.status, entry.priority, entry.due, entryDescription(entry), ...entryTags(entry), ...Object.values(entry.fields || {})]
+    .filter(Boolean).join(' ').toLocaleLowerCase('es').includes(query);
+}
+const visibleEntryIds = computed(() => {
   const page = activePage.value;
-  if (!page) return [];
-  const viewState = getDatabaseViewState(page.id) ?? defaultDatabaseViewState(page);
-  const query = viewState.query.trim().toLocaleLowerCase('es');
-  return sortDatabaseEntries(page.entries.filter((entry) => {
-    if (viewState.filter !== 'Todas' && viewState.filter !== entry.status) return false;
-    if (!query) return true;
-    return [entry.title, entry.status, entry.priority, entry.due, entryDescription(entry), ...entryTags(entry), ...Object.values(entry.fields || {}), ...entrySubtasks(entry).map((subtask) => subtask.title)]
-      .filter(Boolean).join(' ').toLocaleLowerCase('es').includes(query);
-  }), page.id);
+  const visible = new Set<string>();
+  if (!page) return visible;
+  const filter = databaseStatusFilter.value;
+  const query = databaseQuery.value.trim().toLocaleLowerCase('es');
+  function include(entry: PageEntry): boolean {
+    const children = entrySubtasks(entry).map(include);
+    const match = children.includes(true) || matchesDatabaseEntry(entry, filter, query);
+    if (match) visible.add(entry.id);
+    return match;
+  }
+  page.entries.forEach(include);
+  return visible;
 });
+const databaseEntries = computed(() => sortDatabaseEntries((activePage.value?.entries ?? []).filter((entry) => visibleEntryIds.value.has(entry.id))));
 const databaseEntryCount = computed(() => databaseEntries.value.length);
+function databaseChildEntries(entry: PageEntry): PageEntry[] {
+  return sortDatabaseEntries(entrySubtasks(entry).filter((child) => visibleEntryIds.value.has(child.id)));
+}
+function reorderTableEntries(page: WorkspacePage, id: string, target: string): void {
+  if (id === target) return;
+  const path = taskPath(page.entries, id);
+  const siblings = path.length > 1 ? path.at(-2)?.subtasks : page.entries;
+  if (!siblings) return;
+  const from = siblings.findIndex((entry) => entry.id === id);
+  const to = siblings.findIndex((entry) => entry.id === target);
+  if (from < 0 || to < 0) return;
+  const [entry] = siblings.splice(from, 1);
+  siblings.splice(to, 0, entry);
+  touchPage(page);
+}
+function appendSubtask(page: WorkspacePage, parent: PageEntry, title: string, status: BoardStatus = 'Por hacer'): boolean {
+  if (entrySubtasks(parent).length >= 100) {
+    notify('Límite de subtareas alcanzado', 'Cada tarea admite hasta 100 subtareas directas.', 'warning');
+    return false;
+  }
+  parent.subtasks = [...entrySubtasks(parent), { id: makeId(), title, status, done: false }];
+  collapsedTableEntries.value = collapsedTableEntries.value.filter((id) => id !== parent.id);
+  touchPage(page);
+  return true;
+}
 function toggleTableEntry(entryId: string): void {
   collapsedTableEntries.value = collapsedTableEntries.value.includes(entryId)
     ? collapsedTableEntries.value.filter((id) => id !== entryId)
@@ -191,16 +229,12 @@ function openTableSubtaskComposer(entryId: string): void {
 function addTableSubtask(page: WorkspacePage, entry: PageEntry): void {
   const title = tableSubtaskDraft.value.trim();
   if (!title || tableSubtaskComposerId.value !== entry.id) return;
-  if (entrySubtasks(entry).length >= 100) {
-    notify('Límite de subtareas alcanzado', 'Cada tarea admite hasta 100 subtareas.', 'warning');
-    return;
-  }
-  entry.subtasks = [...entrySubtasks(entry), { id: makeId(), title, done: false }];
+  const status = databaseStatusFilter.value === 'Todas' ? 'Por hacer' : databaseStatusFilter.value;
+  if (!appendSubtask(page, entry, title, status)) return;
   tableSubtaskDraft.value = '';
-  touchPage(page);
   void nextTick(() => document.getElementById(`table-new-subtask-${entry.id}`)?.focus({ preventScroll: true }));
 }
-function updateTableSubtask(page: WorkspacePage, subtask: PageSubtask, patch: Partial<Pick<PageSubtask, 'title' | 'done'>>): void {
+function updateTableSubtask(page: WorkspacePage, subtask: PageEntry, patch: Partial<Pick<PageSubtask, 'title' | 'done'>>): void {
   Object.assign(subtask, patch);
   touchPage(page);
 }
@@ -284,12 +318,18 @@ function duplicateDetailEntry(): void {
   const page = detailPage.value;
   const entry = detailEntry.value;
   if (!page || !entry) return;
-  const copy: PageEntry = {
-    ...entry, id: makeId(), title: `${entry.title || 'Sin título'} (copia)`,
-    tags: entryTags(entry),
-    subtasks: entrySubtasks(entry).map((subtask) => ({ ...subtask, id: makeId() })),
-  };
-  page.entries.splice(page.entries.findIndex((item) => item.id === entry.id) + 1, 0, copy);
+  function copyTask<T extends PageEntry>(task: T): T {
+    return {
+      ...task, id: makeId(), tags: entryTags(task),
+      fields: task.fields && { ...task.fields },
+      subtasks: entrySubtasks(task).map(copyTask),
+    };
+  }
+  const copy = copyTask(entry);
+  copy.title = `${entry.title || 'Sin título'} (copia)`;
+  const siblings = detailParent.value ? detailParent.value.subtasks : page.entries;
+  if (!siblings) return;
+  siblings.splice(siblings.findIndex((item) => item.id === entry.id) + 1, 0, copy);
   touchPage(page);
   openEntryDetails(page, copy);
   notify('Tarea duplicada', copy.title);
@@ -298,12 +338,17 @@ function deleteDetailEntry(): void {
   const page = detailPage.value;
   const entry = detailEntry.value;
   if (!page || !entry) return;
-  page.entries = page.entries.filter((item) => item.id !== entry.id);
-  entryInspectorOpen.value = false;
+  const parent = detailParent.value;
+  if (parent) parent.subtasks = parent.subtasks?.filter((item) => item.id !== entry.id);
+  else page.entries = page.entries.filter((item) => item.id !== entry.id);
   deleteEntryModalOpen.value = false;
-  detailEntryId.value = null;
-  tableSubtaskComposerId.value = null;
   touchPage(page);
+  if (parent) openEntryDetails(page, parent);
+  else {
+    closeEntryDetails();
+    detailEntryId.value = null;
+    tableSubtaskComposerId.value = null;
+  }
   notify('Tarea eliminada', entry.title);
 }
 function updateDetailTitle(value: string | number): void {
@@ -367,14 +412,9 @@ function addDetailSubtask(): void {
     document.getElementById('entry-detail-new-subtask')?.focus();
     return;
   }
-  if (entrySubtasks(entry).length >= 100) {
-    notify('Límite de subtareas alcanzado', 'Cada tarea admite hasta 100 subtareas.', 'warning');
-    return;
-  }
-  entry.subtasks = [...entrySubtasks(entry), { id: makeId(), title, done: false }];
+  const page = detailPage.value;
+  if (!page || !appendSubtask(page, entry, title)) return;
   newSubtaskTitle.value = '';
-  collapsedTableEntries.value = collapsedTableEntries.value.filter((id) => id !== entry.id);
-  touchDetailEntry();
   void nextTick(() => document.getElementById('entry-detail-new-subtask')?.focus({ preventScroll: true }));
 }
 function focusNewSubtask(): void {
@@ -391,18 +431,6 @@ function setDetailSubtaskDone(subtaskId: string, done: boolean): void {
   if (!subtask) return;
   subtask.done = done;
   touchDetailEntry();
-}
-function removeDetailSubtask(subtaskId: string): void {
-  if (!detailEntry.value) return;
-  detailEntry.value.subtasks = entrySubtasks(detailEntry.value).filter((subtask) => subtask.id !== subtaskId);
-  touchDetailEntry();
-  focusNewSubtask();
-}
-function clearCompletedSubtasks(): void {
-  if (!detailEntry.value) return;
-  detailEntry.value.subtasks = entrySubtasks(detailEntry.value).filter((subtask) => !subtask.done);
-  touchDetailEntry();
-  focusNewSubtask();
 }
 function setDetailPriority(value: string | readonly string[] | undefined): void {
   if (!detailEntry.value || typeof value !== 'string') return;
@@ -507,15 +535,15 @@ function entryDoneChanged(page: WorkspacePage, entry: PageEntry, done: boolean):
   return {
     defaultDatabaseViewState, parseEntryTags, touchDetailEntry,
     databaseQuery, databaseStatusFilter, visibleDatabaseProperties, collapsedTableEntries, activeView,
-    detailPage, detailEntry, visibleBoardStatuses, boardViewTabs, databaseViewTabs, databaseStatusOptions,
-    databaseSortItems, databasePropertyItems, entriesForStatus, databaseEntries, databaseEntryCount,
+    detailPage, detailEntry, detailParent, visibleBoardStatuses, boardViewTabs, databaseViewTabs, databaseStatusOptions,
+    databaseSortItems, databasePropertyItems, entriesForStatus, databaseEntries, databaseChildEntries, reorderTableEntries, databaseEntryCount,
     toggleTableEntry, openTableSubtaskComposer, addTableSubtask, updateTableSubtask, focusNewTableEntry,
     databaseColumnOrder, databaseColumnWidths, closeEntryDetails, visibleFields, updateFieldValue, addTableEntry, handleDatabaseSort, handleDatabaseProperty, entrySubtasks, entryDescription,
     detailSubtaskProgress, entryTagsLabel, openEntryDetails, duplicateDetailEntry, deleteDetailEntry,
     updateDetailTitle, updateDetailDue, detailDateValue, detailDueIsDate, updateDetailDueFromPicker,
     updateEntryDueFromPicker, setEntryStatus, setEntryPriority,
     updateDetailContent, addDetailSubtask, focusNewSubtask, setDetailSubtaskTitle,
-    setDetailSubtaskDone, removeDetailSubtask, clearCompletedSubtasks, setDetailPriority, setDetailStatus,
+    setDetailSubtaskDone, setDetailPriority, setDetailStatus,
     handleBoardDragStart, handleBoardDragOver, dropBoardEntry, handleBoardDragEnd,
     entryDateLabel, entryCalendarDate, entriesForSelectedDate, entryDoneChanged,
   };

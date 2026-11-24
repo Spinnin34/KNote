@@ -1,6 +1,7 @@
 import type { Content, ContentText, Style, TDocumentDefinitions } from 'pdfmake/interfaces';
 import { initialHtml, tableDataFromBlock } from '@/components/block-editor/content';
 import { entryTags } from '@/domain/workspace/normalizers';
+import { walkTasks } from '@/domain/workspace/task-tree';
 import type { PageEntry, WorkspacePage } from '@/domain/workspace/types';
 import { getBlockImage } from './block-images';
 
@@ -120,6 +121,8 @@ async function richContent(value: string): Promise<Content[]> {
 }
 
 function databaseTables(page: WorkspacePage): Content[] {
+  const entries = Array.from(walkTasks(page.entries));
+  const children = new Set(entries.flatMap((entry) => (entry.subtasks || []).map((child) => child.id)));
   const columns: { name: string; value: (entry: PageEntry) => string }[] = [
     { name: 'Estado', value: (entry) => entry.status },
     { name: 'Prioridad', value: (entry) => entry.priority || '—' },
@@ -136,7 +139,7 @@ function databaseTables(page: WorkspacePage): Content[] {
     tables.push({
       table: { headerRows: 1, widths: [135, ...group.map(() => '*')], body: [
         ['Nombre', ...group.map((column) => column.name)].map((text) => ({ text, bold: true, fillColor: '#eef1f3' })),
-        ...page.entries.map((entry) => [entry.title || 'Sin título', ...group.map((column) => column.value(entry))]),
+        ...entries.map((entry) => [(children.has(entry.id) ? (entry.done ? '[x] ' : '[ ] ') : '') + (entry.title || 'Sin título'), ...group.map((column) => column.value(entry))]),
       ] },
       layout: 'lightHorizontalLines', fontSize: 9, wordBreak: 'break-all', margin: [0, 8, 0, 8],
     });
@@ -144,15 +147,19 @@ function databaseTables(page: WorkspacePage): Content[] {
   return tables;
 }
 
-async function entryContent(entry: PageEntry, page: WorkspacePage): Promise<Content[]> {
-  const metadata = [page.type === 'tasks' ? (entry.done ? 'Hecho' : 'Pendiente') : entry.status, entry.priority, entry.due, ...entryTags(entry)].filter(Boolean);
-  return [
-    { text: entry.title || 'Sin título', fontSize: 15, bold: true, margin: [0, 12, 0, 3] },
+async function entryContent(entry: PageEntry, page: WorkspacePage, includeChildren = true, depth = 0): Promise<Content[]> {
+  const metadata = [
+    page.type === 'tasks' && !depth ? (entry.done ? 'Hecho' : 'Pendiente') : entry.status, depth ? (entry.done ? 'Subtarea completada' : 'Subtarea pendiente') : undefined, entry.priority, entry.due, ...entryTags(entry)].filter(Boolean);
+  const content: Content[] = [
+    { text: entry.title || 'Sin título', fontSize: depth ? 12 : 15, bold: true, margin: [Math.min(depth, 4) * 8, 12, 0, 3] },
     { text: metadata.join('   ·   '), style: 'caption' },
     ...(page.fields || []).map((field) => ({ text: field.name + ' · ' + (field.type === 'checkbox' ? (entry.fields?.[field.id] ? 'Sí' : 'No') : String(entry.fields?.[field.id] ?? '—')), style: 'caption' })),
-    ...(entry.subtasks || []).map((item) => ({ text: (item.done ? '[x] ' : '[ ] ') + item.title })),
     ...await richContent(entry.content || ''),
   ];
+  if (includeChildren) {
+    for (const child of entry.subtasks || []) content.push(...await entryContent(child, page, true, depth + 1));
+  }
+  return content;
 }
 
 export async function downloadPagePdf(page: WorkspacePage, entry?: PageEntry, childTitles: string[] = []): Promise<void> {
@@ -174,8 +181,8 @@ export async function downloadPagePdf(page: WorkspacePage, entry?: PageEntry, ch
     if (childTitles.length) content.push({ text: 'Páginas', bold: true }, { ul: childTitles });
     const database = page.type === 'database' || page.type === 'board';
     if (database) content.push(...databaseTables(page));
-    for (const item of page.entries) {
-      if (!database || item.content || item.subtasks?.length) content.push(...await entryContent(item, page));
+    for (const item of database ? walkTasks(page.entries) : page.entries) {
+      if (!database || item.content) content.push(...await entryContent(item, page, !database));
     }
   }
   const definition: TDocumentDefinitions = {

@@ -10,7 +10,7 @@ export interface DatabaseViewState {
   properties: DatabaseProperty[]; hiddenFields?: string[]; collapsedEntryIds: string[];
 }
 export interface DatabaseField { id: string; name: string; type: 'text' | 'number' | 'checkbox' }
-export interface PageSubtask { id: string; title: string; done: boolean }
+export interface PageSubtask extends PageEntry { done: boolean }
 export interface PageEntry {
   id: string; title: string; status: BoardStatus; due?: string; tag?: string; tags?: string[];
   fields?: Record<string, string | boolean>; priority?: TaskPriority; content?: string; subtasks?: PageSubtask[]; done?: boolean;

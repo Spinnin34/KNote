@@ -387,15 +387,15 @@ const cloudSaveLabel = computed(() => {
 const {
   defaultDatabaseViewState, parseEntryTags, touchDetailEntry,
   databaseQuery, databaseStatusFilter, databaseColumnOrder, databaseColumnWidths, visibleDatabaseProperties, collapsedTableEntries, activeView,
-  detailPage, detailEntry, visibleBoardStatuses, boardViewTabs, databaseViewTabs, databaseStatusOptions,
-  databaseSortItems, databasePropertyItems, entriesForStatus, databaseEntries, databaseEntryCount,
+  detailPage, detailEntry, detailParent, visibleBoardStatuses, boardViewTabs, databaseViewTabs, databaseStatusOptions,
+  databaseSortItems, databasePropertyItems, entriesForStatus, databaseEntries, databaseChildEntries, reorderTableEntries, databaseEntryCount,
   toggleTableEntry, openTableSubtaskComposer, addTableSubtask, updateTableSubtask, visibleFields, updateFieldValue, closeEntryDetails,
   addTableEntry, handleDatabaseSort, handleDatabaseProperty, entrySubtasks, entryDescription,
   detailSubtaskProgress, entryTagsLabel, openEntryDetails, duplicateDetailEntry, deleteDetailEntry,
   updateDetailTitle, updateDetailDue, detailDateValue, detailDueIsDate, updateDetailDueFromPicker,
   updateEntryDueFromPicker, setEntryStatus, setEntryPriority,
   updateDetailContent, addDetailSubtask, focusNewSubtask, setDetailSubtaskTitle,
-  setDetailSubtaskDone, removeDetailSubtask, clearCompletedSubtasks, setDetailPriority, setDetailStatus,
+  setDetailSubtaskDone, setDetailPriority, setDetailStatus,
   handleBoardDragStart, handleBoardDragOver, dropBoardEntry, handleBoardDragEnd,
   entryDateLabel, entryCalendarDate, entriesForSelectedDate, entryDoneChanged,
 } = useDatabaseWorkspace({
@@ -1233,7 +1233,8 @@ onBeforeUnmount(() => {
               :add-table-entry="addTableEntry"
               :handle-database-sort="handleDatabaseSort"
               :handle-database-property="handleDatabaseProperty"
-              @set-entries="(entries) => { if (activePage) { activePage.entries = entries; touchPage(activePage); } }"
+              :database-child-entries="databaseChildEntries"
+              :reorder-table-entries="reorderTableEntries"
               @set-fields="(fields) => { if (activePage) { activePage.fields = fields; touchPage(activePage); } }"
               @set-tag="(former, next) => { if (activePage) { updateDatabaseTag(activePage, former, next); touchPage(activePage); } }"
               @description-conflict="notify('Se actualizó la descripción', 'Abre la celda de nuevo para editar la última versión.', 'warning')"
@@ -1248,7 +1249,10 @@ onBeforeUnmount(() => {
       <aside v-if="entryInspectorOpen && detailEntry && detailPage" class="knote-entry-inspector" :aria-label="'Editar ' + detailEntry.title">
         <Card variant="surface" padding="none" class="knote-entry-inspector-card" :aria-label="detailEntry.title" role="region">
           <header id="task-document-header" tabindex="-1" class="knote-entry-inspector-header">
-            <div class="knote-task-path"><Icon :icon="pageIcon(detailPage)" size="sm" /><small>{{ detailPage.title }}</small><Icon :icon="ChevronRight" size="xs" /><span>Tarea</span></div>
+            <div class="knote-task-path"><Icon :icon="pageIcon(detailPage)" size="sm" /><small>{{ detailPage.title }}</small><Icon :icon="ChevronRight" size="xs" />
+              <Button v-if="detailParent" variant="soft" color="neutral" size="sm" class="knote-parent-task"
+                :title="detailParent.title" :aria-label="'Volver a la tarea ' + detailParent.title" @click="openEntryDetails(detailPage, detailParent)"><span>{{ detailParent.title }}</span></Button>
+              <Icon v-if="detailParent" :icon="ChevronRight" size="xs" /><span>{{ detailParent ? 'Subtarea' : 'Tarea' }}</span></div>
             <div class="knote-entry-inspector-header-actions">
               <Button class="knote-task-expand" variant="soft" color="neutral" size="sm" shape="rounded" :prefix-icon="expandedTask ? Minimize2 : Maximize2" :aria-label="expandedTask ? 'Volver al panel lateral' : 'Ampliar página de tarea'" :title="expandedTask ? 'Volver al panel lateral' : 'Ampliar página de tarea'" @click="expandedTask = !expandedTask" />
               <DropdownMenu id="entry-detail-actions" label="Acciones de la tarea" side="bottom" align="end" variant="surface" color="neutral" rounded="lg" class="knote-task-detail-menu" :items="detailEntryMenuItems" @select="onDetailEntryMenu">
@@ -1265,7 +1269,7 @@ onBeforeUnmount(() => {
 
             <Collapsible id="task-properties" v-model="propertiesOpen" title="Propiedades" size="sm" class="knote-task-disclosure">
               <div class="knote-entry-detail-properties">
-                <div v-if="detailPage.type !== 'calendar' && detailPage.type !== 'tasks'" class="knote-detail-property-row">
+                <div v-if="detailParent || (detailPage.type !== 'calendar' && detailPage.type !== 'tasks')" class="knote-detail-property-row">
                   <Icon :icon="CircleDot" size="sm" class="knote-detail-property-icon" aria-hidden="true" />
                   <Select id="entry-detail-status" :model-value="detailEntry.status" label="Estado" :options="statusOptions" size="sm" variant="surface" @update:model-value="setDetailStatus" />
                 </div>
@@ -1293,22 +1297,22 @@ onBeforeUnmount(() => {
             <Collapsible id="task-subtasks" v-model="subtasksOpen" :title="'Subtareas · ' + detailSubtaskProgress.done + ' / ' + detailSubtaskProgress.total" size="sm" class="knote-task-disclosure">
               <div class="knote-task-checklist">
                 <ul v-if="entrySubtasks(detailEntry).length" class="knote-task-checklist-items">
-                  <li v-for="(subtask, index) in entrySubtasks(detailEntry)" :key="subtask.id" :class="{ 'is-complete': subtask.done }">
+                  <li v-for="(subtask, index) in entrySubtasks(detailEntry)" :key="subtask.id">
                     <Checkbox :id="'entry-subtask-check-' + subtask.id" :model-value="subtask.done" :label="'Completar ' + subtask.title"
                       size="sm" rounded="sm" variant="outline" class="knote-subtask-tick" @update:model-value="setDetailSubtaskDone(subtask.id, $event)" />
                     <Input :id="'entry-subtask-title-' + subtask.id" :model-value="subtask.title" :label="'Nombre de subtarea ' + (index + 1)"
                       size="sm" variant="surface" class="knote-subtask-text" @update:model-value="setDetailSubtaskTitle(subtask.id, String($event))"
                       @keydown.enter.stop.prevent="focusNewSubtask" />
-                    <Button variant="soft" color="neutral" size="sm" :prefix-icon="X"
-                      :aria-label="'Eliminar subtarea ' + subtask.title" class="knote-task-remove-child" @click="removeDetailSubtask(subtask.id)" />
+                    <Button variant="soft" color="neutral" size="sm" :prefix-icon="ArrowUpRight"
+                      :aria-label="'Abrir subtarea ' + subtask.title" title="Abrir subtarea" class="knote-task-open-child"
+                      @click="openEntryDetails(detailPage, subtask)" />
                   </li>
                 </ul>
                 <form class="knote-sheet-inline-form" @submit.prevent="addDetailSubtask">
                   <Icon :icon="Plus" size="sm" />
-                  <Input id="entry-detail-new-subtask" v-model="newSubtaskTitle" label="Nueva subtarea" placeholder="Nueva subtarea" size="sm" variant="surface" />
+                  <Input id="entry-detail-new-subtask" v-model="newSubtaskTitle" label="Nueva subtarea" placeholder="Nueva subtarea" size="sm" variant="surface" maxlength="500" />
                   <Button v-if="newSubtaskTitle.trim()" type="submit" variant="soft" color="neutral" size="sm">Añadir</Button>
                 </form>
-                <Button v-if="detailSubtaskProgress.done" variant="soft" color="neutral" size="sm" class="knote-task-clear-checked" @click="clearCompletedSubtasks">Quitar completadas</Button>
               </div>
             </Collapsible>
 

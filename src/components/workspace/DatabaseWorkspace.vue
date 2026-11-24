@@ -1,14 +1,15 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import DescriptionCell from './DatabaseDescriptionCell.vue';
 import TagsSelect from './DatabaseTagsSelect.vue';
 import FieldInput from './DatabaseFieldInput.vue';
 import Modal from '@/components/ui/Modal.vue';
 import { databaseTags } from '@/domain/workspace/database-tags';
+import { walkTasks } from '@/domain/workspace/task-tree';
 import { makeId } from '@/domain/workspace/ids';
 import type { LucideIcon } from '@lucide/vue';
 import {
-  AlignLeft, ArrowDown, ArrowUp, ArrowUpDown, CalendarDays, ChevronDown, ChevronRight, CircleCheck, CircleDashed, CircleDot,
+  AlignLeft, ArrowDown, ArrowUp, ArrowUpDown, CalendarDays, ChevronDown, ChevronRight, CircleCheck, CircleDashed, CircleDot, ListTree,
   FileText, Filter, Flag, GripVertical, Hash, PanelRightOpen, SquareCheck, Plus, Search, SlidersHorizontal, Tag, X,
 } from '@lucide/vue';
 import Badge from '@/components/ui/Badge.vue';
@@ -36,6 +37,8 @@ type Props = {
   databaseStatusOptions: readonly { label: string; value: string }[];
   visibleDatabaseProperties: readonly DatabaseProperty[];
   databaseEntries: readonly PageEntry[];
+  databaseChildEntries: (entry: PageEntry) => PageEntry[];
+  reorderTableEntries: (page: WorkspacePage, id: string, target: string) => void;
   databaseEntryCount: number;
   databaseSortItems: readonly MenuItem[];
   databasePropertyItems: readonly MenuItem[];
@@ -61,7 +64,7 @@ type Props = {
   setEntryStatus: (page: WorkspacePage, entry: PageEntry, value: string | readonly string[] | undefined) => void;
   setEntryPriority: (page: WorkspacePage, entry: PageEntry, value: string | readonly string[] | undefined) => void;
   updateEntryDueFromPicker: (page: WorkspacePage, entry: PageEntry, value: CalendarModelValue) => void;
-  updateTableSubtask: (page: WorkspacePage, subtask: PageSubtask, patch: Partial<Pick<PageSubtask, 'title' | 'done'>>) => void;
+  updateTableSubtask: (page: WorkspacePage, subtask: PageEntry, patch: Partial<Pick<PageSubtask, 'title' | 'done'>>) => void;
   toggleTableEntry: (entryId: string) => void;
   openTableSubtaskComposer: (entryId: string) => void;
   addTableSubtask: (page: WorkspacePage, entry: PageEntry) => void;
@@ -75,7 +78,7 @@ type Props = {
 
 const {
   activePage, visibleBoardStatuses, boardViewTabs, databaseViewTabs, databaseStatusOptions,
-  visibleDatabaseProperties, databaseEntries, databaseEntryCount, databaseSortItems, databasePropertyItems,
+  visibleDatabaseProperties, databaseEntries, databaseChildEntries, reorderTableEntries, databaseEntryCount, databaseSortItems, databasePropertyItems,
   entryInspectorOpen, detailPageId, detailEntryId, draggedEntryId, dropTargetEntryId,
   entriesForStatus, entryIcon, entryIconStyle, entrySubtasks, entryDescription, entryDateLabel,
   entryCalendarDate, entryTags, handleBoardDragStart, handleBoardDragOver, dropBoardEntry,
@@ -96,7 +99,6 @@ const columnOrder = defineModel<string[]>('columnOrder', { required: true });
 const columnWidths = defineModel<Record<string, number>>('columnWidths', { required: true });
 const emit = defineEmits<{
   setFields: [fields: DatabaseField[]];
-  setEntries: [entries: PageEntry[]];
   setTag: [former: string, next: string];
   descriptionConflict: [];
 }>();
@@ -135,10 +137,29 @@ const draggingColumn = ref('');
 const dragOverColumn = ref('');
 const resizing = ref<{ id: string; startX: number; startWidth: number; width: number }>();
 const minColumnWidth = (id: string) => id === 'title' ? 160 : 96;
-function widthOf(column: { id: string; width: number }) {
-  return resizing.value?.id === column.id ? resizing.value.width : columnWidths.value[column.id] ?? column.width;
-}
-const totalWidth = computed(() => columns.value.reduce((sum, column) => sum + widthOf(column), 0));
+const workspaceElement = ref<HTMLElement | null>(null);
+const availableWidth = ref(0);
+let sizeObserver: ResizeObserver | undefined;
+onMounted(() => {
+  if (!workspaceElement.value) return;
+  sizeObserver = new ResizeObserver(([entry]) => { availableWidth.value = Math.floor(entry.contentRect.width) - 2; });
+  sizeObserver.observe(workspaceElement.value);
+});
+onUnmounted(() => sizeObserver?.disconnect());
+
+const widths = computed(() => {
+  const values = Object.fromEntries(columns.value.map((column) => [column.id, columnWidths.value[column.id] ?? (column.id === 'title' && availableWidth.value > 0 && availableWidth.value < 520 ? 195 : column.width)]));
+  const state = resizing.value;
+  if (state) values[state.id] = state.width;
+  const unusedWidth = availableWidth.value - Object.values(values).reduce((sum, value) => sum + value, 0);
+  const flexible = columns.value.filter((column) => columnWidths.value[column.id] === undefined && state?.id !== column.id);
+  if (unusedWidth > 0 && flexible.length) {
+    const extra = Math.floor(unusedWidth / flexible.length);
+    flexible.forEach((column, index) => { values[column.id] = Math.min(700, values[column.id] + extra + Number(index < unusedWidth % flexible.length)); });
+  }
+  return values;
+});
+const totalWidth = computed(() => Object.values(widths.value).reduce((sum, value) => sum + value, 0));
 function clampWidth(id: string, value: number) { return Math.max(minColumnWidth(id), Math.min(Math.round(value), 700)); }
 function resizeStart(event: PointerEvent, id: string, width: number) {
   if (event.button !== 0) return;
@@ -220,25 +241,40 @@ function toggleProperties(selection: MenuSelection) {
 const manualSort = computed(() => currentSort.value === 'sort:manual');
 const rowDrag = ref('');
 const rowTarget = ref('');
+type SheetRow = { entry: PageEntry; depth: number; siblings: readonly PageEntry[]; index: number; childrenVisible: boolean };
+const filtering = computed(() => Boolean(databaseQuery.value.trim() || databaseStatusFilter.value !== 'Todas'));
+const branchIds = computed(() => Array.from(walkTasks(activePage.entries)).filter((entry) => entrySubtasks(entry).length).map((entry) => entry.id));
+const branchMenu = computed<MenuItem[]>(() => [
+  { id: 'expand', label: 'Expandir todas', disabled: !collapsedTableEntries.value.length },
+  { id: 'collapse', label: 'Plegar todas', disabled: branchIds.value.every((id) => collapsedTableEntries.value.includes(id)) },
+]);
+function showBranches(selection: MenuSelection) {
+  if (selection.id === 'collapse') {
+    tableSubtaskComposerId.value = null;
+    collapsedTableEntries.value = branchIds.value;
+  } else if (selection.id === 'expand') collapsedTableEntries.value = [];
+}
+const sheetRows = computed(() => {
+  const rows: SheetRow[] = [];
+  function append(siblings: readonly PageEntry[], depth: number) {
+    siblings.forEach((entry, index) => {
+      const childrenVisible = filtering.value || !collapsedTableEntries.value.includes(entry.id);
+      rows.push({ entry, depth, siblings, index, childrenVisible });
+      if (childrenVisible) append(databaseChildEntries(entry), depth + 1);
+    });
+  }
+  append(databaseEntries, 0);
+  return rows;
+});
 function dropRow(id: string) {
-  if (rowDrag.value) reorderRow(rowDrag.value, id);
+  if (rowDrag.value && manualSort.value) reorderTableEntries(activePage, rowDrag.value, id);
   rowDrag.value = rowTarget.value = '';
 }
-function reorderRow(id: string, target: string) {
-  if (!manualSort.value || id === target) return;
-  const from = activePage.entries.findIndex((entry) => entry.id === id);
-  const to = activePage.entries.findIndex((entry) => entry.id === target);
-  if (from < 0 || to < 0) return;
-  const entries = [...activePage.entries];
-  const [entry] = entries.splice(from, 1);
-  entries.splice(to, 0, entry);
-  emit('setEntries', entries);
-}
-function rowOrderKey(event: KeyboardEvent, index: number) {
-  if (!(event.altKey && ['ArrowUp', 'ArrowDown'].includes(event.key))) return;
+function rowOrderKey(event: KeyboardEvent, row: SheetRow) {
+  if (!(event.altKey && ['ArrowUp', 'ArrowDown'].includes(event.key)) || !manualSort.value) return;
   event.preventDefault();
-  const target = databaseEntries[index + (event.key === 'ArrowUp' ? -1 : 1)];
-  if (target) reorderRow(databaseEntries[index].id, target.id);
+  const target = row.siblings[row.index + (event.key === 'ArrowUp' ? -1 : 1)];
+  if (target) reorderTableEntries(activePage, row.entry.id, target.id);
 }
 function updateTags(entry: PageEntry, tags: string[]) {
   entry.tags = tags;
@@ -281,7 +317,7 @@ function finishRename(entry: PageEntry) {
 </script>
 
 <template>
-<div class="knote-database-shell" :style="activeView === 'table' ? { maxWidth: 'max(38rem, ' + (totalWidth + 2) + 'px)' } : undefined">
+<div ref="workspaceElement" class="knote-database-shell">
               <Tabs id="page-view-tabs" v-model="activeView" :items="activePage.type === 'database' ? databaseViewTabs : boardViewTabs" label="Vistas de la página" type="segmented" variant="surface" rounded="full" size="sm" :panel-surface="false" class="knote-view-tabs">
               <template #board>
                 <div class="knote-board" aria-label="Tablero por estado">
@@ -291,7 +327,7 @@ function finishRename(entry: PageEntry) {
                       <Card v-for="entry in entriesForStatus(activePage, status)" :key="entry.id" :data-entry-id="entry.id" variant="glass" padding="sm" class="knote-board-card" :class="{ 'knote-board-card--dragging': draggedEntryId === entry.id, 'knote-board-card--drop-target': dropTargetEntryId === entry.id }" role="button" tabindex="0" draggable="true" :aria-label="'Abrir ' + entry.title + '. Mantén y arrastra para cambiar su posición o estado.'" @click="openEntryDetails(activePage, entry)" @keydown.enter.prevent="openEntryDetails(activePage, entry)" @keydown.space.prevent="openEntryDetails(activePage, entry)" @dragstart.stop="handleBoardDragStart(entry, $event)" @dragover="handleBoardDragOver(entry.id, $event)" @drop.stop.prevent="dropBoardEntry(status, $event, entry)" @dragend="handleBoardDragEnd">
                         <h3 class="knote-board-card-heading"><Icon :icon="entryIcon(entry)" size="sm" :style="entryIconStyle(entry)" aria-hidden="true" /><span>{{ entry.title }}</span></h3>
                         <div v-if="entrySubtasks(entry).length" class="knote-board-subtasks" :aria-label="entrySubtasks(entry).length + ' subtareas'">
-                          <span v-for="subtask in entrySubtasks(entry).slice(0, 3)" :key="subtask.id" :class="{ 'knote-subtask-is-done': subtask.done }"><Icon :icon="subtask.done ? CircleCheck : CircleDashed" size="xs" /><span>{{ subtask.title }}</span></span>
+                          <span v-for="subtask in entrySubtasks(entry).slice(0, 3)" :key="subtask.id" :class="{ 'knote-subtask-is-done': subtask.done }"><i class="knote-board-task-completion" aria-hidden="true" /><span>{{ subtask.title }}</span></span>
                           <small v-if="entrySubtasks(entry).length > 3">+{{ entrySubtasks(entry).length - 3 }} más</small>
                         </div>
                         <p v-else-if="entryDescription(entry)" class="knote-board-card-content">{{ entryDescription(entry) }}</p>
@@ -312,7 +348,7 @@ function finishRename(entry: PageEntry) {
         <template #header>
           <thead><tr>
             <th v-for="(column, index) in columns" :key="column.id" scope="col" :data-column="column.id"
-              :data-drop="dragOverColumn === column.id || undefined" :style="{ width: widthOf(column) + 'px' }"
+              :data-drop="dragOverColumn === column.id || undefined" :style="{ width: widths[column.id] + 'px' }"
               :aria-sort="column.id === 'title' || column.id === 'due' ? headerSort(column.id) : undefined"
               @dragover.prevent="dragOverColumn = draggingColumn ? column.id : ''"
               @dragleave="dragOverColumn = ''"
@@ -333,34 +369,39 @@ function finishRename(entry: PageEntry) {
                 </span>
               </div>
               <span class="knote-column-resizer" role="separator" aria-orientation="vertical" tabindex="0" :aria-label="'Ancho de ' + column.name"
-                :aria-valuenow="widthOf(column)" :aria-valuemin="minColumnWidth(column.id)" :aria-valuemax="700"
-                @keydown="resizeKey($event, column.id, widthOf(column))" @pointerdown.stop.prevent="resizeStart($event, column.id, widthOf(column))"
+                :aria-valuenow="widths[column.id]" :aria-valuemin="minColumnWidth(column.id)" :aria-valuemax="700"
+                @keydown="resizeKey($event, column.id, widths[column.id])" @pointerdown.stop.prevent="resizeStart($event, column.id, widths[column.id])"
                 @pointermove="resizeMove" @pointerup="resizeEnd(true)" @pointercancel="resizeEnd(false)" @lostpointercapture="resizeEnd(false)" />
             </th>
           </tr></thead>
         </template>
         <tbody>
           <tr v-if="!databaseEntries.length"><td :colspan="columnCount" class="knote-empty-cell">{{ activePage.entries.length ? 'Ninguna tarea coincide con los filtros.' : 'La tabla todavía no tiene tareas.' }}</td></tr>
-          <template v-for="(entry, rowIndex) in databaseEntries" :key="entry.id">
-            <tr class="knote-table-entry-row" :class="{ 'knote-table-entry-row--selected': entryInspectorOpen && detailPageId === activePage.id && detailEntryId === entry.id }"
+          <template v-for="{ entry, depth, childrenVisible, siblings, index } in sheetRows" :key="entry.id">
+            <tr class="knote-table-entry-row" :class="{ 'knote-sheet-child-row': depth > 0, 'knote-table-entry-row--selected': entryInspectorOpen && detailPageId === activePage.id && detailEntryId === entry.id }"
               :data-drop="rowTarget === entry.id || undefined" @dragover.prevent="rowTarget = rowDrag ? entry.id : ''" @drop.prevent="dropRow(entry.id)">
               <template v-for="column in columns" :key="column.id">
                 <th v-if="column.id === 'title'" scope="row" data-column="title">
-                  <div class="knote-row-title">
+                  <div class="knote-row-title" :style="{ '--knote-task-depth': Math.min(depth, 4) }">
                     <Button v-if="manualSort" variant="soft" color="neutral" size="sm" :prefix-icon="GripVertical" class="knote-row-grip"
                       :aria-label="'Mover ' + entry.title" title="Arrastra para mover · Alt + ↑ o ↓" draggable="true"
-                      @keydown="rowOrderKey($event, rowIndex)"
+                      @keydown="rowOrderKey($event, { entry, depth, childrenVisible, siblings, index })"
                       @dragstart="rowDrag = entry.id; $event.dataTransfer?.setData('text/plain', entry.title)" @dragend="rowDrag = rowTarget = ''" />
                     <Button v-if="entrySubtasks(entry).length" variant="soft" color="neutral" size="sm" class="knote-row-toggle"
-                      :prefix-icon="collapsedTableEntries.includes(entry.id) ? ChevronRight : ChevronDown"
-                      :aria-expanded="!collapsedTableEntries.includes(entry.id)" :aria-label="'Subtareas de ' + entry.title" @click="toggleTableEntry(entry.id)" />
+                      :prefix-icon="childrenVisible ? ChevronDown : ChevronRight"
+                      :aria-expanded="childrenVisible" :disabled="filtering" :aria-label="'Subtareas de ' + entry.title" @click="toggleTableEntry(entry.id)" />
                     <Button v-else variant="soft" color="neutral" size="sm" class="knote-row-toggle knote-row-add"
                       :prefix-icon="Plus" :aria-label="'Añadir subtarea a ' + entry.title" @click="openTableSubtaskComposer(entry.id)" />
+                    <Checkbox v-if="depth" :id="'table-subtask-' + entry.id" :model-value="Boolean(entry.done)" :label="'Completar ' + entry.title"
+                      size="sm" rounded="sm" variant="outline" class="knote-subtask-tick"
+                      @update:model-value="updateTableSubtask(activePage, entry, { done: $event })" />
                     <Input v-if="renameId === entry.id" id="database-rename" v-model="nameDraft" label="Nombre de la tarea" size="sm" variant="surface"
                       class="knote-row-rename" maxlength="500" @blur="finishRename(entry)" @keydown.enter.prevent="finishRename(entry)" @keydown.escape.stop.prevent="renameId = null" />
                     <Button v-else variant="soft" color="neutral" size="sm" class="knote-row-name" :title="entry.title" :aria-label="'Renombrar ' + entry.title" @click="rename(entry)">
-                      <Icon :icon="entryIcon(entry)" size="sm" :style="entryIconStyle(entry)" /><span>{{ entry.title || 'Sin título' }}</span>
+                      <Icon v-if="!depth || entry.icon" :icon="entryIcon(entry)" size="sm" :style="entryIconStyle(entry)" /><span>{{ entry.title || 'Sin título' }}</span>
                     </Button>
+                    <Button v-if="entrySubtasks(entry).length" variant="soft" color="neutral" size="sm" :prefix-icon="Plus" class="knote-row-add-child"
+                      :aria-label="'Añadir subtarea a ' + entry.title" title="Añadir subtarea" @click="openTableSubtaskComposer(entry.id)" />
                     <Button variant="soft" color="neutral" size="sm" :prefix-icon="PanelRightOpen" class="knote-row-page"
                       :aria-label="'Abrir tarea ' + entry.title" title="Abrir página de tarea" @click="openEntryDetails(activePage, entry)" />
                   </div>
@@ -391,31 +432,16 @@ function finishRename(entry: PageEntry) {
                 </td>
               </template>
             </tr>
-            <template v-if="!collapsedTableEntries.includes(entry.id)">
-              <tr v-for="subtask in entrySubtasks(entry)" :key="subtask.id" class="knote-sheet-child-row" :class="{ 'is-complete': subtask.done }">
-                <template v-for="column in columns" :key="column.id">
-                  <th v-if="column.id === 'title'" scope="row" data-column="title">
-                    <div class="knote-sheet-child">
-                      <Checkbox :id="'table-subtask-' + subtask.id" :model-value="subtask.done" :label="'Completar ' + subtask.title"
-                        size="sm" rounded="sm" variant="outline" class="knote-subtask-tick" @update:model-value="updateTableSubtask(activePage, subtask, { done: $event })" />
-                      <Input :id="'table-subtask-title-' + subtask.id" :model-value="subtask.title" :label="'Subtarea de ' + entry.title"
-                        size="sm" variant="surface" class="knote-subtask-text" @update:model-value="updateTableSubtask(activePage, subtask, { title: String($event) })" />
-                    </div>
-                  </th>
-                  <td v-else />
-                </template>
-              </tr>
-              <tr v-if="entrySubtasks(entry).length || tableSubtaskComposerId === entry.id" class="knote-sheet-add-child">
-                <td :colspan="columnCount">
-                  <form v-if="tableSubtaskComposerId === entry.id" class="knote-sheet-inline-form" @submit.prevent="addTableSubtask(activePage, entry)">
-                    <Input :id="'table-new-subtask-' + entry.id" v-model="tableSubtaskDraft" :label="'Nueva subtarea de ' + entry.title"
-                      placeholder="Nombre de la subtarea" size="sm" variant="surface" @keydown.escape.stop.prevent="tableSubtaskComposerId = null" />
-                    <Button type="submit" variant="soft" color="neutral" size="sm" :disabled="!tableSubtaskDraft.trim()">Añadir</Button>
-                  </form>
-                  <Button v-else variant="soft" color="neutral" size="sm" :prefix-icon="Plus" class="knote-sheet-add-child-button" @click="openTableSubtaskComposer(entry.id)">Nueva subtarea</Button>
-                </td>
-              </tr>
-            </template>
+            <tr v-if="tableSubtaskComposerId === entry.id" class="knote-sheet-add-child">
+              <td :colspan="columnCount">
+                <form class="knote-sheet-inline-form" @submit.prevent="addTableSubtask(activePage, entry)">
+                  <Input :id="'table-new-subtask-' + entry.id" v-model="tableSubtaskDraft" :label="'Nueva subtarea de ' + entry.title"
+                    placeholder="Nueva subtarea" size="sm" variant="surface" maxlength="500" @keydown.escape.stop.prevent="tableSubtaskComposerId = null" />
+                  <Button type="submit" variant="soft" color="neutral" size="sm" :disabled="!tableSubtaskDraft.trim()">Añadir</Button>
+                  <Button variant="soft" color="neutral" size="sm" :prefix-icon="X" aria-label="Cerrar nueva subtarea" @click="tableSubtaskComposerId = null" />
+                </form>
+              </td>
+            </tr>
           </template>
           <tr class="knote-sheet-footer"><td :colspan="columnCount">
             <form class="knote-sheet-inline-form" @submit.prevent="addTableEntry(activePage)">
@@ -437,6 +463,10 @@ function finishRename(entry: PageEntry) {
                     <template #selected="{ text }"><span class="knote-database-select-value"><Icon :icon="Filter" size="xs" />{{ text }}</span></template>
                   </Select>
                   <DropdownMenu id="database-sort" label="Ordenar elementos" :items="databaseSortItems" side="bottom" align="end" variant="surface" rounded="lg" class="knote-database-menu knote-database-action" @select="handleDatabaseSort"><template #trigger><Icon :icon="ArrowUpDown" size="sm" /><span>Ordenar</span></template></DropdownMenu>
+                  <DropdownMenu v-if="activeView === 'table' && branchIds.length && !filtering" id="database-subtasks" label="Vista de subtareas" :items="branchMenu"
+                    variant="surface" rounded="lg" align="end" class="knote-database-menu knote-database-action" @select="showBranches">
+                    <template #trigger><Icon :icon="ListTree" size="sm" /><span>Subtareas</span></template>
+                  </DropdownMenu>
                   <DropdownMenu id="database-properties" label="Mostrar propiedades" :items="databasePropertyItems" side="bottom" align="end" variant="surface" rounded="lg" class="knote-database-menu knote-database-action" @select="toggleProperties"><template #trigger><Icon :icon="SlidersHorizontal" size="sm" /><span>Propiedades</span></template></DropdownMenu>
                   <Button variant="solid" color="primary" size="sm" :prefix-icon="Plus" @click="openEntryModal(databaseStatusFilter === 'Todas' ? undefined : databaseStatusFilter as BoardStatus)">Nuevo</Button>
                 </div>

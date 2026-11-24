@@ -32,23 +32,21 @@ export function entryTags(entry: PageEntry): string[] {
   const tags = entry.tags?.filter((tag) => tag.trim()) ?? [];
   return tags.length ? tags : entry.tag?.trim() ? [entry.tag.trim()] : [];
 }
-function normalizeEntry(value: unknown): PageEntry | null {
+function normalizeEntry(value: unknown, fallbackId?: string): PageEntry | null {
   if (!value || typeof value !== 'object') return null;
   const raw = value as Partial<PageEntry>;
-  const id = typeof raw.id === 'string' ? raw.id : makeId();
+  const id = typeof raw.id === 'string' ? raw.id : fallbackId ?? makeId();
   const rawSubtasks = (value as { subtasks?: unknown }).subtasks;
   const tags = Array.isArray(raw.tags)
     ? raw.tags.filter((tag): tag is string => typeof tag === 'string').map((tag) => tag.trim()).filter(Boolean).slice(0, 12)
     : typeof raw.tag === 'string' && raw.tag.trim() ? [raw.tag.trim()] : [];
   const subtasks = Array.isArray(rawSubtasks) ? rawSubtasks.flatMap((item, index): PageSubtask[] => {
-    if (typeof item === 'string') {
-      const title = item.trim();
-      return title ? [{ id: `${id}-sub-${index}`, title, done: false }] : [];
-    }
-    if (!item || typeof item !== 'object') return [];
-    const subtask = item as Partial<PageSubtask>;
-    const title = typeof subtask.title === 'string' ? subtask.title.trim() : '';
-    return title ? [{ id: typeof subtask.id === 'string' ? subtask.id : `${id}-sub-${index}`, title, done: Boolean(subtask.done) }] : [];
+    const child = typeof item === 'string' ? { title: item } : item;
+    if (!isRecord(child) || typeof child.title !== 'string') return [];
+    const title = child.title.trim();
+    if (!title && typeof child.id !== 'string') return [];
+    const entry = normalizeEntry({ ...child, title }, `${id}-sub-${index}`);
+    return entry ? [{ ...entry, done: Boolean(entry.done) }] : [];
   }).slice(0, 100) : [];
   return {
     id,
@@ -68,7 +66,7 @@ function normalizeEntry(value: unknown): PageEntry | null {
   };
 }
 function cloneSamplePage(page: WorkspacePage): WorkspacePage {
-  return { ...page, entries: page.entries.map(normalizeEntry).filter((entry): entry is PageEntry => Boolean(entry)) };
+  return { ...page, entries: page.entries.map((entry) => normalizeEntry(entry)).filter((entry): entry is PageEntry => Boolean(entry)) };
 }
 export function normalizePages(stored: unknown): WorkspacePage[] {
   if (!Array.isArray(stored)) return samplePages.map(cloneSamplePage);
