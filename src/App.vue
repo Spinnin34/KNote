@@ -112,8 +112,6 @@ const detailPageId = ref<string | null>(null);
 const detailEntryId = ref<string | null>(null);
 const entryInspectorScroll = ref<HTMLElement | null>(null);
 const newSubtaskTitle = ref('');
-const tableSubtaskComposerId = ref<string | null>(null);
-const tableSubtaskDraft = ref('');
 const newTableEntryTitle = ref('');
 const draggedEntryId = ref<string | null>(null);
 const dropTargetEntryId = ref<string | null>(null);
@@ -389,7 +387,7 @@ const {
   databaseQuery, databaseStatusFilter, databaseColumnOrder, databaseColumnWidths, visibleDatabaseProperties, collapsedTableEntries, activeView,
   detailPage, detailEntry, detailParent, visibleBoardStatuses, boardViewTabs, databaseViewTabs, databaseStatusOptions,
   databaseSortItems, databasePropertyItems, entriesForStatus, databaseEntries, databaseChildEntries, reorderTableEntries, databaseEntryCount,
-  toggleTableEntry, openTableSubtaskComposer, addTableSubtask, updateTableSubtask, visibleFields, updateFieldValue, closeEntryDetails,
+  toggleTableEntry, addTableSubtask, visibleFields, updateFieldValue, closeEntryDetails,
   addTableEntry, handleDatabaseSort, handleDatabaseProperty, entrySubtasks, entryDescription,
   detailSubtaskProgress, entryTagsLabel, openEntryDetails, duplicateDetailEntry, deleteDetailEntry,
   updateDetailTitle, updateDetailDue, detailDateValue, detailDueIsDate, updateDetailDueFromPicker,
@@ -401,7 +399,7 @@ const {
 } = useDatabaseWorkspace({
   pages, selectedId, databaseViewStates, activePage, nonDatabaseActiveView, entryInspectorOpen,
   deleteEntryModalOpen, detailPageId, detailEntryId, entryInspectorScroll,
-  newSubtaskTitle, tableSubtaskComposerId, tableSubtaskDraft, newTableEntryTitle,
+  newSubtaskTitle, newTableEntryTitle,
   draggedEntryId, dropTargetEntryId, selectedDate, touchPage, notify,
 });
 function updateDetailTags(value: string[]) {
@@ -421,8 +419,6 @@ function setActive(id: string, updateHistory = true): void {
   if (id !== 'home' && !pages.value.some((page) => page.id === id)) id = 'home';
   entryInspectorOpen.value = false;
   deleteEntryModalOpen.value = false;
-  tableSubtaskComposerId.value = null;
-  tableSubtaskDraft.value = '';
   newTableEntryTitle.value = '';
   selectedId.value = id;
   bannerFiles.value = [];
@@ -640,16 +636,15 @@ function setPageIconColor(color: string): void {
   activePage.value.iconColor = color ? color.toLowerCase() : undefined;
   touchPage(activePage.value);
 }
-function setDetailEntryIcon(iconId: string | undefined): void {
-  if (!detailEntry.value) return;
+function setEntryIcon(page: WorkspacePage, entry: PageEntry, iconId: string | undefined): void {
   if (iconId && !pageIconOptions.some((option) => option.id === iconId)) return;
-  detailEntry.value.icon = iconId;
-  touchDetailEntry();
+  entry.icon = iconId;
+  touchPage(page);
 }
-function setDetailEntryIconColor(color: string): void {
-  if (!detailEntry.value || (color && !/^#[\da-f]{6}$/i.test(color))) return;
-  detailEntry.value.iconColor = color ? color.toLowerCase() : undefined;
-  touchDetailEntry();
+function setEntryIconColor(page: WorkspacePage, entry: PageEntry, color: string): void {
+  if (color && !/^#[\da-f]{6}$/i.test(color)) return;
+  entry.iconColor = color ? color.toLowerCase() : undefined;
+  touchPage(page);
 }
 async function optimizeBanner(file: File): Promise<Blob> {
   if (!file.type.startsWith('image/')) throw new Error('Elige una imagen para la portada.');
@@ -1189,8 +1184,6 @@ onBeforeUnmount(() => {
               v-model:database-query="databaseQuery"
               v-model:database-status-filter="databaseStatusFilter"
               v-model:collapsed-table-entries="collapsedTableEntries"
-              v-model:table-subtask-composer-id="tableSubtaskComposerId"
-              v-model:table-subtask-draft="tableSubtaskDraft"
               v-model:new-table-entry-title="newTableEntryTitle"
               v-model:column-order="databaseColumnOrder"
               v-model:column-widths="databaseColumnWidths"
@@ -1212,6 +1205,8 @@ onBeforeUnmount(() => {
               :entries-for-status="entriesForStatus"
               :entry-icon="entryIcon"
               :entry-icon-style="entryIconStyle"
+              :set-entry-icon="setEntryIcon"
+              :set-entry-icon-color="setEntryIconColor"
               :entry-subtasks="entrySubtasks"
               :entry-description="entryDescription"
               :entry-date-label="entryDateLabel"
@@ -1226,9 +1221,7 @@ onBeforeUnmount(() => {
               :set-entry-status="setEntryStatus"
               :set-entry-priority="setEntryPriority"
               :update-entry-due-from-picker="updateEntryDueFromPicker"
-              :update-table-subtask="updateTableSubtask"
               :toggle-table-entry="toggleTableEntry"
-              :open-table-subtask-composer="openTableSubtaskComposer"
               :add-table-subtask="addTableSubtask"
               :add-table-entry="addTableEntry"
               :handle-database-sort="handleDatabaseSort"
@@ -1263,7 +1256,7 @@ onBeforeUnmount(() => {
           </header>
           <div ref="entryInspectorScroll" class="knote-entry-inspector-scroll">
             <div class="knote-entry-detail-title-row">
-              <PageIconPicker :id="'entry-icon-' + detailEntry.id" :label="'Personalizar icono de ' + detailEntry.title" :icon="entryIcon(detailEntry)" :icon-id="detailEntry.icon" :options="pageIconOptions" :color="detailEntry.iconColor" subject="tarea" class="knote-entry-icon-picker" @update:icon-id="setDetailEntryIcon" @update:color="setDetailEntryIconColor" />
+              <PageIconPicker :id="'entry-icon-' + detailEntry.id" :label="'Personalizar icono de ' + detailEntry.title" :icon="entryIcon(detailEntry)" :icon-id="detailEntry.icon" :options="pageIconOptions" :color="detailEntry.iconColor" subject="tarea" class="knote-entry-icon-picker" @update:icon-id="setEntryIcon(detailPage, detailEntry, $event)" @update:color="setEntryIconColor(detailPage, detailEntry, $event)" />
               <Input id="entry-detail-title" :model-value="detailEntry.title" label="Título de la tarea" placeholder="Sin título" size="md" variant="surface" class="knote-entry-inspector-title" @update:model-value="updateDetailTitle" />
             </div>
 

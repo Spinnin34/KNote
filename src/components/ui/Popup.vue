@@ -2,7 +2,6 @@
 import {
   computed,
   nextTick,
-  onBeforeUnmount,
   onMounted,
   ref,
   useAttrs,
@@ -154,7 +153,7 @@ function handleDocumentPointer(event: PointerEvent): void {
 }
 
 function handleKeydown(event: KeyboardEvent): void {
-  if (event.key !== "Escape" || !model.value) return;
+  if (event.defaultPrevented || event.key !== "Escape" || !model.value) return;
   event.preventDefault();
   close();
 }
@@ -173,17 +172,19 @@ watch(
 
 onMounted(() => {
   resolveContext();
-  document.addEventListener("pointerdown", handleDocumentPointer, true);
-  document.addEventListener("keydown", handleKeydown);
-  window.addEventListener("resize", updatePosition, { passive: true });
-  window.addEventListener("scroll", updatePosition, true);
-});
-
-onBeforeUnmount(() => {
-  document.removeEventListener("pointerdown", handleDocumentPointer, true);
-  document.removeEventListener("keydown", handleKeydown);
-  window.removeEventListener("resize", updatePosition);
-  window.removeEventListener("scroll", updatePosition, true);
+  watch(model, (open, _, onCleanup) => {
+    if (!open) return;
+    document.addEventListener("pointerdown", handleDocumentPointer, true);
+    document.addEventListener("keydown", handleKeydown);
+    window.addEventListener("resize", updatePosition, { passive: true });
+    window.addEventListener("scroll", updatePosition, true);
+    onCleanup(() => {
+      document.removeEventListener("pointerdown", handleDocumentPointer, true);
+      document.removeEventListener("keydown", handleKeydown);
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    });
+  }, { immediate: true });
 });
 </script>
 

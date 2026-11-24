@@ -283,7 +283,7 @@ button[id^="entry-icon-"][id$="-trigger"] .knote-icon-trigger { width: 1.35rem; 
 .knote-sheet :is(.knote-column-label, .knote-row-name) > span:not([data-balsa="icon"]) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .knote-sheet :is(.knote-column-label, .knote-row-name) svg { flex-shrink: 0; margin: 0; }
 .knote-sheet .knote-row-name { font-weight: 610; }
-.knote-sheet :is(.knote-column-label, .knote-column-menu, .knote-row-grip, .knote-row-toggle, .knote-row-name, .knote-row-page, .knote-row-add-child, .knote-description-trigger, .knote-sheet-add-child-button)[data-balsa] {
+.knote-sheet :is(.knote-column-label, .knote-column-menu, .knote-row-grip, .knote-row-toggle, .knote-row-name, .knote-row-page, .knote-row-add-child, .knote-description-trigger)[data-balsa] {
   min-height: 1.8rem; border: 0; background: transparent; box-shadow: none;
 }
 .knote-sheet :is(.knote-column-menu, .knote-row-grip, .knote-row-toggle, .knote-row-page, .knote-row-add-child) {
@@ -294,12 +294,19 @@ button[id^="entry-icon-"][id$="-trigger"] .knote-icon-trigger { width: 1.35rem; 
 .knote-sheet .knote-row-page { margin-inline-start: auto; }
 .knote-sheet .knote-row-add-child { opacity: .55; }
 .knote-sheet tr:is(:hover, :focus-within) .knote-row-add-child { opacity: 1; }
+.knote-sheet button:has(.knote-icon-trigger--cell) {
+  display: grid; flex: 0 0 auto; width: 1.45rem; height: 1.65rem; place-items: center;
+  min-height: 0; min-width: 0; padding: 0 !important; border: 0;
+  border-radius: .35rem; background: transparent; box-shadow: none;
+}
+.knote-sheet button:has(.knote-icon-trigger--cell):is(:hover, [aria-expanded="true"]) { background: var(--balsa-role-muted); }
+.knote-sheet .knote-icon-trigger--cell { width: 1rem; height: 1rem; margin: 0; }
 .knote-sheet .knote-row-name[data-balsa="button"] { color: var(--balsa-role-foreground); }
 .knote-board-task-completion { border: 1px solid var(--balsa-role-secondary); border-radius: .2rem; flex: 0 0 .65rem; height: .65rem; }
 .knote-subtask-is-done .knote-board-task-completion { background: #fff; }
 .knote-sheet .knote-row-grip:not(:hover, :focus-visible), .knote-sheet .knote-column-menu:not(:hover, :focus-visible) { opacity: .55; }
 .knote-sheet :is(.knote-column-menu, .knote-row-grip) { cursor: grab; }
-.knote-sheet :is(.knote-column-menu, .knote-row-grip, .knote-row-toggle, .knote-row-page, .knote-row-add-child, .knote-row-name, .knote-description-trigger, .knote-sheet-add-child-button):hover {
+.knote-sheet :is(.knote-column-menu, .knote-row-grip, .knote-row-toggle, .knote-row-page, .knote-row-add-child, .knote-row-name, .knote-description-trigger):hover {
   background: var(--balsa-role-muted) !important; color: var(--balsa-role-foreground);
 }
 .knote-column-resizer {
@@ -312,6 +319,10 @@ button[id^="entry-icon-"][id$="-trigger"] .knote-icon-trigger { width: 1.35rem; 
 .knote-sheet .knote-description-trigger > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .knote-cell-placeholder { color: var(--balsa-role-secondary); }
 .knote-sheet .knote-description-edit { display: block; width: 100%; min-height: 2.7rem; margin-block: .2rem; padding: .3rem; font-size: .82rem; }
+/* Keep visually hidden labels and control icons inside their scrolling cells. */
+.knote-sheet :is([data-balsa="select"], [data-balsa="input"], [data-balsa="textarea"], [data-balsa="date-picker"]) {
+  position: relative; min-width: 0;
+}
 .knote-sheet [data-balsa="select"] > label, .knote-sheet [data-balsa="input"] > label,
 .knote-sheet [data-balsa="textarea"] > label, .knote-task-checklist [data-balsa="input"] > label,
 .knote-subtask-tick > span:last-child {
@@ -356,6 +367,34 @@ button[id^="entry-icon-"][id$="-trigger"] .knote-icon-trigger { width: 1.35rem; 
   outline: 2px solid var(--balsa-role-focus-ring); outline-offset: 3px;
 }
 .knote-subtask-tick svg { display: none; }
+.knote-sheet .knote-sheet-draft-row > :is(th, td) {
+  background: color-mix(in oklab, var(--balsa-role-surface) 32%, var(--balsa-role-background));
+}
+.knote-sheet .knote-sheet-draft-row > th[data-column="title"] {
+  background: color-mix(in oklab, var(--balsa-role-accent) 6%, var(--balsa-role-background));
+}
+.knote-draft-form { --knote-draft-icon-offset: 1.45rem; }
+.knote-draft-form--manual { --knote-draft-icon-offset: 2.95rem; }
+.knote-sheet .knote-draft-icon {
+  width: 1rem; height: 1rem; flex: 0 0 auto; margin: 0; margin-inline-start: calc(var(--knote-draft-icon-offset) + .2rem);
+  color: var(--balsa-role-secondary);
+}
+.knote-draft-form > [data-balsa="input"], .knote-sheet .knote-row-title > [data-balsa="input"] { flex: 1 1 auto; min-width: 0; }
+.knote-sheet .knote-draft-name[data-balsa-control] {
+  width: 100%; min-height: 1.85rem !important; padding: .14rem .26rem !important;
+  border-color: transparent !important; background: transparent !important; box-shadow: none !important; font-size: .82rem !important;
+}
+.knote-sheet .knote-draft-name[data-balsa-control]:focus { border-color: var(--balsa-role-border) !important; }
+.knote-sheet .knote-draft-action {
+  flex: 0 0 auto; width: 1.4rem; min-height: 1.65rem; height: 1.65rem; padding: 0 !important;
+  border: 0; background: transparent; color: var(--balsa-role-secondary); box-shadow: none;
+}
+.knote-sheet .knote-draft-action svg { width: .83rem; height: .83rem; margin: 0; }
+.knote-sheet .knote-draft-action:is(:hover, :focus-visible):not(:disabled) { background: var(--balsa-role-muted); color: var(--balsa-role-foreground); }
+.knote-sheet .knote-draft-action:disabled { opacity: .38; }
+@media (max-width: 680px) {
+  .knote-draft-form { --knote-draft-icon-offset: .25rem; }
+}
 .knote-sheet-inline-form > [data-balsa="input"] { min-width: 0; flex: 1 1 auto; }
 .knote-sheet .knote-row-rename, .knote-subtask-text[data-balsa-control], .knote-sheet-inline-form [data-balsa-control] {
   width: 100%; min-height: 1.9rem !important; padding: .2rem .35rem !important; border-color: transparent !important;
@@ -363,10 +402,9 @@ button[id^="entry-icon-"][id$="-trigger"] .knote-icon-trigger { width: 1.35rem; 
 }
 .knote-subtask-text[data-balsa-control]:focus, .knote-sheet-inline-form [data-balsa-control]:focus { border-color: var(--balsa-role-border) !important; }
 .knote-sheet-inline-form { display: flex; min-width: 0; align-items: center; gap: .38rem; color: var(--balsa-role-secondary); }
-.knote-sheet :is(.knote-sheet-inline-form, .knote-sheet-add-child-button) { position: sticky; inset-inline-start: .5rem; }
+.knote-sheet .knote-sheet-inline-form { position: sticky; inset-inline-start: .5rem; }
 .knote-sheet .knote-sheet-inline-form { width: min(100%, 17.5rem); }
-.knote-sheet .knote-sheet-add-child > td, .knote-sheet .knote-sheet-footer > td { height: 2.3rem; padding-block: .2rem; }
-.knote-sheet .knote-sheet-add-child-button { gap: .35rem; margin-left: .95rem; color: var(--balsa-role-secondary); font-size: .76rem; }
+.knote-sheet .knote-sheet-footer > td { height: 2.3rem; padding-block: .2rem; }
 .knote-sheet .knote-column-menu { border: 0; background: transparent; box-shadow: none; }
 .knote-column-drag { flex: 0 0 auto; display: inline-flex; }
 .knote-entry-inspector {

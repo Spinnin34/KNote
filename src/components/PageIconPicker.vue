@@ -17,6 +17,7 @@ const props = defineProps<{
   options: readonly PageIconOption[];
   color?: string;
   subject?: 'página' | 'tarea';
+  compact?: boolean;
 }>();
 const emit = defineEmits<{
   'update:iconId': [value: string | undefined];
@@ -28,14 +29,14 @@ const swatches = ['#cbd5e1', '#60a5fa', '#34d399', '#fbbf24', '#fb7185', '#c084f
 
 function choose(id: string | undefined, close: (restoreFocus?: boolean) => void): void {
   emit('update:iconId', id);
-  close(false);
+  close(Boolean(props.compact));
 }
 </script>
 
 <template>
-  <Popup :id="props.id" v-model="open" :label="props.label" side="bottom" align="start" size="lg" variant="surface" rounded="xl" shadow="lg" class="knote-icon-popup">
+  <Popup :id="props.id" v-model="open" :label="props.label" side="bottom" align="start" size="lg" variant="surface" rounded="xl" shadow="lg" :initial-focus="props.compact" class="knote-icon-popup">
     <template #trigger>
-      <Icon class="knote-icon-trigger" :icon="props.icon" size="xl" :stroke-width="1.5" :style="{ color: props.color || 'var(--balsa-role-accent)' }" />
+      <Icon class="knote-icon-trigger" :class="{ 'knote-icon-trigger--cell': props.compact }" :icon="props.icon" :size="props.compact ? 'sm' : 'xl'" :stroke-width="1.5" :style="{ color: props.color || (props.compact ? 'var(--balsa-role-secondary)' : 'var(--balsa-role-accent)') }" />
       <span class="sr-only">{{ props.label }}</span>
     </template>
     <template #default="{ close }">

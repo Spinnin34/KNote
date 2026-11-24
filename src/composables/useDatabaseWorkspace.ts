@@ -21,8 +21,6 @@ type DatabaseWorkspaceContext = {
   detailEntryId: Ref<string | null>;
   entryInspectorScroll: Ref<HTMLElement | null>;
   newSubtaskTitle: Ref<string>;
-  tableSubtaskComposerId: Ref<string | null>;
-  tableSubtaskDraft: Ref<string>;
   newTableEntryTitle: Ref<string>;
   draggedEntryId: Ref<string | null>;
   dropTargetEntryId: Ref<string | null>;
@@ -35,7 +33,7 @@ export function useDatabaseWorkspace(context: DatabaseWorkspaceContext) {
   const {
     pages, selectedId, databaseViewStates, activePage, nonDatabaseActiveView, entryInspectorOpen,
     deleteEntryModalOpen, detailPageId, detailEntryId, entryInspectorScroll,
-    newSubtaskTitle, tableSubtaskComposerId, tableSubtaskDraft, newTableEntryTitle,
+    newSubtaskTitle, newTableEntryTitle,
     draggedEntryId, dropTargetEntryId,
     selectedDate, touchPage, notify,
   } = context;
@@ -220,23 +218,14 @@ function toggleTableEntry(entryId: string): void {
     ? collapsedTableEntries.value.filter((id) => id !== entryId)
     : [...collapsedTableEntries.value, entryId];
 }
-function openTableSubtaskComposer(entryId: string): void {
-  tableSubtaskComposerId.value = entryId;
-  tableSubtaskDraft.value = '';
-  collapsedTableEntries.value = collapsedTableEntries.value.filter((id) => id !== entryId);
-  void nextTick(() => document.getElementById(`table-new-subtask-${entryId}`)?.focus({ preventScroll: true }));
-}
-function addTableSubtask(page: WorkspacePage, entry: PageEntry): void {
-  const title = tableSubtaskDraft.value.trim();
-  if (!title || tableSubtaskComposerId.value !== entry.id) return;
+function addTableSubtask(page: WorkspacePage, parent: PageEntry, name: string): boolean {
+  const title = name.trim();
+  if (!title) return false;
   const status = databaseStatusFilter.value === 'Todas' ? 'Por hacer' : databaseStatusFilter.value;
-  if (!appendSubtask(page, entry, title, status)) return;
-  tableSubtaskDraft.value = '';
-  void nextTick(() => document.getElementById(`table-new-subtask-${entry.id}`)?.focus({ preventScroll: true }));
-}
-function updateTableSubtask(page: WorkspacePage, subtask: PageEntry, patch: Partial<Pick<PageSubtask, 'title' | 'done'>>): void {
-  Object.assign(subtask, patch);
-  touchPage(page);
+  if (!appendSubtask(page, parent, title, status)) return false;
+  const child = parent.subtasks?.at(-1);
+  if (child && !visibleEntryIds.value.has(child.id)) notify('Subtarea creada', 'La búsqueda actual oculta esta fila.', 'info');
+  return true;
 }
 function focusNewTableEntry(): void {
   if (activeView.value !== 'table') activeView.value = 'table';
@@ -302,8 +291,6 @@ function closeEntryDetails() {
   void nextTick(() => { if (target?.isConnected) target.focus({ preventScroll: true }); });
 }
 function openEntryDetails(page: WorkspacePage, entry: PageEntry): void {
-  tableSubtaskComposerId.value = null;
-  tableSubtaskDraft.value = '';
   if (document.activeElement instanceof HTMLElement && !document.activeElement.closest('.knote-entry-inspector')) returnTarget = document.activeElement;
   detailPageId.value = page.id;
   detailEntryId.value = entry.id;
@@ -347,7 +334,6 @@ function deleteDetailEntry(): void {
   else {
     closeEntryDetails();
     detailEntryId.value = null;
-    tableSubtaskComposerId.value = null;
   }
   notify('Tarea eliminada', entry.title);
 }
@@ -537,7 +523,7 @@ function entryDoneChanged(page: WorkspacePage, entry: PageEntry, done: boolean):
     databaseQuery, databaseStatusFilter, visibleDatabaseProperties, collapsedTableEntries, activeView,
     detailPage, detailEntry, detailParent, visibleBoardStatuses, boardViewTabs, databaseViewTabs, databaseStatusOptions,
     databaseSortItems, databasePropertyItems, entriesForStatus, databaseEntries, databaseChildEntries, reorderTableEntries, databaseEntryCount,
-    toggleTableEntry, openTableSubtaskComposer, addTableSubtask, updateTableSubtask, focusNewTableEntry,
+    toggleTableEntry, addTableSubtask, focusNewTableEntry,
     databaseColumnOrder, databaseColumnWidths, closeEntryDetails, visibleFields, updateFieldValue, addTableEntry, handleDatabaseSort, handleDatabaseProperty, entrySubtasks, entryDescription,
     detailSubtaskProgress, entryTagsLabel, openEntryDetails, duplicateDetailEntry, deleteDetailEntry,
     updateDetailTitle, updateDetailDue, detailDateValue, detailDueIsDate, updateDetailDueFromPicker,
