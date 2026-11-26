@@ -83,4 +83,26 @@ describe('document content', () => {
       caption: 'Inventario', headers: ['Artículo', 'Unidades'], rows: [['Caja', '3']],
     });
   });
+
+  it('persists point sizes, explicit normal weight and proportional columns', () => {
+    const stored = RICH_PREFIX + '<div class="knote-preview-columns" data-column-widths="2,1">'
+      + '<div class="knote-preview-column"><p align="center"><span style="font-size:24px;font-weight:400;position:fixed">Normal</span></p></div>'
+      + '<div class="knote-preview-column" data-before="18"><strong>Negrita</strong></div></div>';
+    const html = initialHtml(stored);
+    const restored = parse(html);
+    expect(restored.querySelector('p')?.style.textAlign).toBe('center');
+    expect(restored.querySelector('span')?.getAttribute('style')).toBe('font-size:18pt;font-weight:normal');
+    expect(restored.querySelector('.knote-preview-columns')?.getAttribute('data-column-widths')).toBe('2,1');
+    expect(restored.querySelector('[data-before]')?.getAttribute('data-before')).toBe('18');
+    expect(initialHtml(RICH_PREFIX + html)).toBe(html);
+  });
+
+  it('retains rich text in tables with no header and strips unsafe cell markup', () => {
+    const html = '<table><tr><td><b>Caja</b><br><span style="font-size:13pt">azul</span><img src="https://example.org/x"></td><td>3</td></tr></table>';
+    const block = parse(initialHtml(RICH_PREFIX + html)).firstElementChild as HTMLElement;
+    const table = tableDataFromBlock(block);
+    expect(table.headerless).toBe(true);
+    expect(table.rows).toEqual([['Caja\nazul', '3']]);
+    expect(table.rowHtml).toEqual([['<strong>Caja</strong><br><span style="font-size:13pt">azul</span>', '']]);
+  });
 });

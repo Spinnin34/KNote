@@ -148,8 +148,9 @@ button[id^="page-icon-"][id$="-trigger"]:hover { transform: scale(1.06); backgro
 .knote-block-editor details { margin: .65rem 0; padding: .55rem .75rem; border: 1px solid var(--balsa-role-border); border-radius: .7rem; background: color-mix(in oklab, var(--balsa-role-surface) 72%, transparent); }
 .knote-block-editor summary { font-weight: 600; list-style: none; }
 .knote-block-editor .knote-equation { padding: .65rem; color: var(--balsa-role-accent); font-family: var(--balsa-font-mono, ui-monospace, monospace); text-align: center; }
-.knote-block-editor .knote-preview-columns { display: grid; grid-template-columns: repeat(var(--knote-columns, 2), minmax(0, 1fr)); gap: .7rem; }
+.knote-block-editor .knote-preview-columns { display: grid; grid-template-columns: var(--knote-column-tracks, repeat(var(--knote-columns, 2), minmax(0, 1fr))); gap: .7rem; }
 .knote-block-editor .knote-preview-column { min-width: 0; padding: .55rem; border-radius: .65rem; background: color-mix(in oklab, var(--balsa-role-surface) 42%, transparent); }
+.knote-preview-column[data-before] { margin-top: var(--knote-column-before, 0pt); }
 .knote-format-toolbar { z-index: 150; gap: .14rem; padding: .28rem; transition: opacity 75ms ease, transform 75ms ease; }
 .knote-format-toolbar [data-balsa="button"][data-size="sm"][data-shape="fab"] { width: 1.9rem; height: 1.9rem; min-height: 1.9rem; }
 .knote-format-menu > button { min-height: 1.9rem; padding-inline: .5rem; }
@@ -170,6 +171,7 @@ button[id^="page-icon-"][id$="-trigger"]:hover { transform: scale(1.06); backgro
   .knote-page-banner { min-height: 7rem; }
 }
 @media (max-width: 680px) {
+  .knote-preview-column[data-before] { margin-top: 0; }
   .knote-canvas { padding: 1.35rem .85rem 2rem; }
   .knote-home-dashboard { gap: .55rem; }
   .knote-dashboard-grid { gap: .55rem; }

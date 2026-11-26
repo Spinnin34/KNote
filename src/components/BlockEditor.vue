@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, createApp, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import {
-  ArrowDown, ArrowUp, Bold, ChevronDown, Code2, Columns3, Copy, GripVertical, Highlighter, Image as ImageIcon, Italic,
+  AlignCenter, AlignLeft, AlignRight, ArrowDown, ArrowUp, Bold, ChevronDown, Code2, Columns3, Copy, GripVertical, Highlighter, Image as ImageIcon, Italic,
   Link2, List, ListOrdered, ListTodo, Minus, Plus, Quote, Sigma, Strikethrough, Table as TableIcon,
   BookOpen, ListTree, SeparatorHorizontal, Trash2, Type, Underline, X,
 } from '@lucide/vue';
@@ -14,9 +14,9 @@ import Attachment from '@/components/ui/Attachment.vue';
 import TableBlockEditor from '@/components/BlockTableEditor.vue';
 import type { CommandGroup, CommandItem } from '@/components/ui/command';
 import type { MenuItem, MenuSelection } from '@/components/ui/menu';
-import { CALL_OUT_ICONS, EMPTY_TABLE, LANGUAGE_IDS, LANGUAGES, RICH_PREFIX, TABLE_LIMITS, calloutGlyph, codeBlockText, initialHtml, normalizeTableData, safeBlockColor, safeLanguage, sanitizeNodes, tableDataFromBlock, type EditorTableData } from '@/components/block-editor/content';
+import { CALL_OUT_ICONS, EMPTY_TABLE, LANGUAGE_IDS, LANGUAGES, RICH_PREFIX, TABLE_LIMITS, calloutGlyph, codeBlockText, initialHtml, normalizeTableData, safeBlockColor, safeFontSize, safeLanguage, sanitizeNodes, tableDataFromBlock, textAlignment, type EditorTableData } from '@/components/block-editor/content';
 import { refreshDocumentOutline } from '@/components/block-editor/outline';
-import { blankElement, createBlock, createTaskCheckbox } from '@/components/block-editor/block-factory';
+import { blankElement, createBlock, createTaskCheckbox, isColumnBlockId } from '@/components/block-editor/block-factory';
 import { blockFromListItem, convertListItemsToList, listItemContent, mergeAdjacentLists, replaceSelectedListItems } from '@/components/block-editor/list-transformations';
 import { captureDocumentSelection, createDocumentHistory, restoreDocumentSelection } from '@/components/block-editor/history';
 import { getBlockImage, retainBlockImage, saveBlockImage } from '@/lib/block-images';
@@ -30,6 +30,8 @@ const shell = ref<HTMLElement | null>(null);
 const linkDraft = ref('https://');
 const linkEditorOpen = ref(false);
 const selectionOpen = ref(false);
+const selectedBold = ref(false);
+const selectedItalic = ref(false);
 const formatBlocksOpen = ref(false);
 const formatQuery = ref('');
 const formatTrigger = ref<HTMLElement | null>(null);
@@ -139,6 +141,8 @@ const slashBlockGroups: readonly CommandGroup[] = [{
     { id: 'block:definition', label: 'Definición', keywords: ['glosario', 'término'], icon: BookOpen },
     { id: 'block:divider', label: 'Divisor', keywords: ['línea', 'separador'], icon: Minus },
     ...[2, 3, 4, 5].map((count) => ({ id: `block:columns:${count}`, label: `${count} columnas`, keywords: ['columnas', 'diseño'], icon: Columns3 })),
+    { id: 'block:columns:wide-left', label: 'Columna lateral derecha', keywords: ['columnas', 'imagen', 'diseño'], icon: Columns3 },
+    { id: 'block:columns:wide-right', label: 'Columna lateral izquierda', keywords: ['columnas', 'imagen', 'diseño'], icon: Columns3 },
   ],
 }];
 
@@ -430,6 +434,8 @@ function updateSelectionToolbar(): void {
   }
   savedRange = range.cloneRange();
   savedSelectedBlocks = resolveSelectedBlocks(root, range);
+  selectedBold.value = document.queryCommandState?.('bold') ?? false;
+  selectedItalic.value = document.queryCommandState?.('italic') ?? false;
   const rects = Array.from(range.getClientRects()).filter((rect) => rect.width || rect.height);
   const rect = rects[rects.length - 1] || range.getBoundingClientRect();
   if (rect.bottom < 48 || rect.top > window.innerHeight) { selectionOpen.value = false; return; }
@@ -858,9 +864,9 @@ function applyImageResize(event: PointerEvent): void {
   const horizontal = direction.includes('e') ? dx : direction.includes('w') ? -dx : 0;
   const vertical = direction.includes('n') ? -dy * state.ratio : direction.includes('s') ? dy * state.ratio : 0;
   const delta = horizontal && vertical ? (Math.abs(horizontal) >= Math.abs(vertical) ? horizontal : vertical) : horizontal || vertical;
-  const minWidth = Math.min(96, state.parentWidth);
+  const minWidth = Math.min(28, state.parentWidth);
   const nextWidth = Math.min(state.parentWidth, Math.max(minWidth, state.startWidth + delta));
-  const widthPercent = Math.max(20, Math.min(100, Math.round((nextWidth / state.parentWidth) * 1000) / 10));
+  const widthPercent = Math.max(1, Math.min(100, Math.round((nextWidth / state.parentWidth) * 1000) / 10));
   const nextOffset = direction.includes('w')
     ? Math.max(0, Math.min(state.parentWidth - nextWidth, state.startOffset + state.startWidth - nextWidth))
     : state.startOffset;
@@ -874,12 +880,21 @@ function setImageDimensions(figure: HTMLElement, width: number, offset: number):
   figure.style.setProperty('--knote-image-offset', `${offset}%`);
   imageResizePosition.value = imageResizeHandlesAt(figure);
 }
+function alignImage(position: 'left' | 'center' | 'right'): void {
+  const figure = activeImage.value;
+  if (!figure) return;
+  const width = Number(figure.dataset.width || 100);
+  const offset = (100 - width) * (position === 'left' ? 0 : position === 'center' ? 0.5 : 1);
+  setImageDimensions(figure, width, offset);
+  imageToolbarPosition.value = positionInsideShell(figure, -48, 'end');
+  emitDocument();
+}
 function resizeImageWithKeyboard(event: KeyboardEvent): void {
   const figure = activeImage.value;
   if (!figure || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
   event.preventDefault();
   const direction = event.key === 'ArrowLeft' || event.key === 'ArrowDown' ? -1 : 1;
-  const width = Math.max(20, Math.min(100, Number(figure.dataset.width || 100) + direction * (event.shiftKey ? 10 : 2)));
+  const width = Math.max(1, Math.min(100, Number(figure.dataset.width || 100) + direction * (event.shiftKey ? 10 : 2)));
   setImageDimensions(figure, width, Math.min(Number(figure.dataset.offset || 0), 100 - width));
   emitDocument(false);
 }
@@ -967,7 +982,7 @@ function showComponentSettings(target: Element): boolean {
     calloutToolsPosition.value = positionInsideShell(nextCallout, -38, 'end');
   }
   if (nextImage) {
-    imageToolbarPosition.value = positionInsideShell(nextImage, -48);
+    imageToolbarPosition.value = positionInsideShell(nextImage, -48, 'end');
     imageResizePosition.value = imageResizeHandlesAt(nextImage);
   }
   return true;
@@ -1559,7 +1574,7 @@ function applyBlock(id: string): void {
       const lastList = listItems[listItems.length - 1].parentElement;
       if (lastList) insertBlockAt(lastList, id);
       return;
-    } else if (id === 'block:paragraph' || heading || id === 'block:quote' || id === 'block:callout-icon' || id === 'block:callout-plain' || id === 'block:code' || id === 'block:toggle' || id === 'block:equation' || /^block:columns:[2-5]$/.test(id)) {
+    } else if (id === 'block:paragraph' || heading || id === 'block:quote' || id === 'block:callout-icon' || id === 'block:callout-plain' || id === 'block:code' || id === 'block:toggle' || id === 'block:equation' || isColumnBlockId(id)) {
       focusTarget = replaceSelectedListItems(listItems, (selected) => selected.flatMap((item) => blockFromListItem(id, item)));
     }
     if (id === 'block:highlight') {
@@ -1680,7 +1695,7 @@ function applyBlock(id: string): void {
       details.append(summary, body); node.replaceWith(details);
       focusTarget ??= details;
     });
-  } else if (id === 'block:equation' || /^block:columns:[2-5]$/.test(id)) {
+  } else if (id === 'block:equation' || isColumnBlockId(id)) {
     const replacement = createBlock(id);
     if (id === 'block:equation') replacement.textContent = targets.map((node) => node.innerText).join('\n');
     else {
@@ -1698,6 +1713,7 @@ function applyBlock(id: string): void {
 function replaceTag(node: HTMLElement, tag: string): HTMLElement {
   if (node.tagName.toLowerCase() === tag) return node;
   const replacement = document.createElement(tag);
+  if (textAlignment(node.style.textAlign)) replacement.style.textAlign = node.style.textAlign;
   replacement.append(...node.childNodes);
   if (!replacement.childNodes.length) replacement.append(document.createElement('br'));
   node.replaceWith(replacement);
@@ -1707,10 +1723,22 @@ function toggleFormatMenu(event: MouseEvent): void {
   if (formatBlocksOpen.value) { closeFormatMenu(true); return; }
   if (!(event.currentTarget instanceof HTMLElement)) return;
   const targets = savedSelectedBlocks;
-  formatGroups.value = slashBlockGroups.map((group) => ({
+  const formats: CommandGroup = {
+    id: 'text-size', label: 'Tamaño de letra',
+    items: [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 40, 48, 64].map((size) => ({ id: `size:${size}`, label: `${size} pt`, icon: Type })),
+  };
+  const alignment: CommandGroup = {
+    id: 'text-alignment', label: 'Alineación', items: [
+      { id: 'align:left', label: 'Alinear texto a la izquierda', icon: AlignLeft },
+      { id: 'align:center', label: 'Centrar texto', icon: AlignCenter },
+      { id: 'align:right', label: 'Alinear texto a la derecha', icon: AlignRight },
+      { id: 'align:justify', label: 'Justificar texto' },
+    ],
+  };
+  formatGroups.value = [formats, alignment, ...slashBlockGroups.map((group) => ({
     ...group,
     items: group.items.filter((item) => canApplyBlock(item.id, targets)),
-  }));
+  }))];
   formatTrigger.value = event.currentTarget;
   formatPosition.value = commandPosition(event.currentTarget, 'end');
   formatBlocksOpen.value = true;
@@ -1725,6 +1753,21 @@ function closeFormatMenu(restoreFocus = false): void {
 }
 function handleFormatSelection(item: CommandItem): void {
   closeFormatMenu();
+  const [action, value] = item.id.split(':');
+  if (action === 'size') {
+    const size = safeFontSize(value);
+    if (size) wrapSelected('span', { style: `font-size:${size}pt` });
+    return;
+  }
+  if (action === 'align') {
+    const alignment = textAlignment(value);
+    const targets = getSelectedBlocks().filter((block) => block.matches('p,div:not([class]),h1,h2,h3,h4,li,dt,dd'));
+    if (!alignment || !targets.length) return;
+    targets.forEach((target) => { target.style.textAlign = alignment; });
+    emitDocument();
+    scheduleSelectionUpdate();
+    return;
+  }
   applyBlock(item.id);
 }
 function handleCommandEscape(event: KeyboardEvent, close: () => void): void {
@@ -2248,6 +2291,10 @@ function handleEditorClick(event: MouseEvent): void {
   }
   const target = event.target;
   if (!(target instanceof HTMLElement)) return;
+  if (target instanceof HTMLImageElement && target.closest('figure.knote-image-block')) {
+    showComponentSettings(target);
+    return;
+  }
   updateHoveredBlockFromSelection();
   const checkbox = target instanceof HTMLInputElement && target.type === 'checkbox' ? target : null;
   if (checkbox) {
@@ -2498,8 +2545,10 @@ onBeforeUnmount(() => {
       <Button variant="soft" color="neutral" size="sm" shape="fab" aria-label="Cerrar opciones de la cita" title="Cerrar" @click="clearActiveComponentSettings"><Icon :icon="X" size="xs" /></Button>
     </div>
 
-    <div v-if="activeImage" class="knote-image-tools knote-editor-control" :style="imageToolbarPosition" @pointerdown.stop="imageToolsPinned = true">
-      <span class="knote-image-tools-label">Arrastra los tiradores para cambiar el tamaño</span>
+    <div v-if="activeImage" class="knote-image-tools knote-editor-control" role="toolbar" aria-label="Posición de imagen" :style="imageToolbarPosition" @pointerdown.stop="imageToolsPinned = true">
+      <Button variant="soft" color="neutral" size="sm" shape="fab" :prefix-icon="AlignLeft" aria-label="Alinear imagen a la izquierda" title="Alinear a la izquierda" @click="alignImage('left')" />
+      <Button variant="soft" color="neutral" size="sm" shape="fab" :prefix-icon="AlignCenter" aria-label="Centrar imagen" title="Centrar" @click="alignImage('center')" />
+      <Button variant="soft" color="neutral" size="sm" shape="fab" :prefix-icon="AlignRight" aria-label="Alinear imagen a la derecha" title="Alinear a la derecha" @click="alignImage('right')" />
       <Button variant="soft" color="neutral" size="sm" shape="fab" aria-label="Cerrar opciones de imagen" title="Cerrar" @click="clearActiveComponentSettings"><Icon :icon="X" size="xs" /></Button>
     </div>
 
@@ -2537,20 +2586,20 @@ onBeforeUnmount(() => {
       :style="toolbarPosition"
       @pointerdown.stop
     >
-      <Button variant="glass" color="neutral" size="sm" shape="fab" :prefix-icon="Bold" aria-label="Negrita" title="Negrita" @pointerdown.prevent @click="applyInline('bold')" />
-      <Button variant="glass" color="neutral" size="sm" shape="fab" :prefix-icon="Italic" aria-label="Cursiva" title="Cursiva" @pointerdown.prevent @click="applyInline('italic')" />
+      <Button :variant="selectedBold ? 'soft' : 'glass'" color="neutral" size="sm" shape="fab" :prefix-icon="Bold" aria-label="Negrita" :aria-pressed="selectedBold" title="Negrita" @pointerdown.prevent @click="applyInline('bold')" />
+      <Button :variant="selectedItalic ? 'soft' : 'glass'" color="neutral" size="sm" shape="fab" :prefix-icon="Italic" aria-label="Cursiva" :aria-pressed="selectedItalic" title="Cursiva" @pointerdown.prevent @click="applyInline('italic')" />
       <Button variant="glass" color="neutral" size="sm" shape="fab" :prefix-icon="Underline" aria-label="Subrayado" title="Subrayado" @pointerdown.prevent @click="applyInline('underline')" />
       <Button variant="glass" color="neutral" size="sm" shape="fab" :prefix-icon="Strikethrough" aria-label="Tachado" title="Tachado" @pointerdown.prevent @click="applyInline('strikeThrough')" />
       <Button variant="glass" color="neutral" size="sm" shape="fab" :prefix-icon="Link2" aria-label="Insertar enlace" title="Insertar enlace" @pointerdown.prevent @click="startLinkEdit" />
       <Button variant="glass" color="neutral" size="sm" shape="fab" :prefix-icon="Code2" aria-label="Código en línea" title="Código en línea" @pointerdown.prevent @click="applyInline('insertHTML')" />
-      <Button variant="glass" color="neutral" size="sm" :prefix-icon="Type" :suffix-icon="ChevronDown" class="knote-format-menu" aria-label="Más formatos de texto" :aria-expanded="formatBlocksOpen" @pointerdown.prevent @click="toggleFormatMenu">Bloques</Button>
+      <Button variant="glass" color="neutral" size="sm" :prefix-icon="Type" :suffix-icon="ChevronDown" class="knote-format-menu" aria-label="Más formatos de texto" :aria-expanded="formatBlocksOpen" @pointerdown.prevent @click="toggleFormatMenu">Formato</Button>
     </div>
     <div v-if="formatBlocksOpen" class="knote-editor-command knote-selection-format-menu knote-editor-control" :style="formatPosition" @keydown.esc.capture="handleCommandEscape($event, () => closeFormatMenu(true))">
       <CommandMenu
         :id="`selection-formats-${pageId}`"
         :model-value="true"
         v-model:query="formatQuery"
-        label="Cambiar el tipo de bloque"
+        label="Cambiar el formato del texto"
         placeholder="Buscar formatos…"
         :groups="formatGroups"
         size="sm"

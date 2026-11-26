@@ -89,8 +89,8 @@ function submitPage(close?: () => void): void {
       <div class="knote-create-type-label"><span>TIPO DE PÁGINA</span><Badge variant="outline" color="secondary" size="sm">{{ importMode ? 'PDF' : props.pageTypeLabel(pageType) }}</Badge></div>
       <Tabs id="new-page-type-tabs" v-model="selectedType" :items="createTypeTabs" label="Tipo de página" type="segmented" variant="surface" size="sm" class="knote-create-tabs">
         <template #pdf>
-          <Attachment id="import-pdf-file" v-model="files" label="Archivo PDF" accept=".pdf,application/pdf" :max-size="32 * 1024 * 1024" :disabled="Boolean(progress)" hint="Hasta 32 MB. El texto se convierte en bloques editables. Las páginas escaneadas se conservan como imágenes." />
-          <Checkbox id="import-pdf-layout" v-model="preserveLayout" label="Incluir también la vista original de cada página" :disabled="Boolean(progress)" size="sm" />
+          <Attachment id="import-pdf-file" v-model="files" label="Archivo PDF" accept=".pdf,application/pdf" :max-size="32 * 1024 * 1024" :disabled="Boolean(progress)" hint="Hasta 32 MB. Se recuperan el texto con formato, las tablas y las imágenes. Las páginas escaneadas se conservan como imágenes." />
+          <Checkbox id="import-pdf-layout" v-model="preserveLayout" label="Guardar una vista de referencia de cada página" :disabled="Boolean(progress)" size="sm" />
           <p v-if="progress" role="status">{{ progress }}</p>
           <p v-if="failure" class="knote-cloud-inline-error" role="alert">{{ failure }}</p>
         </template>

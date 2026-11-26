@@ -1,4 +1,4 @@
-import { blankElement, createBlock, createTaskCheckbox } from '@/components/block-editor/block-factory';
+import { blankElement, createBlock, createTaskCheckbox, isColumnBlockId } from '@/components/block-editor/block-factory';
 
 export function listItemContent(item: HTMLLIElement): { content: Node[]; nestedLists: HTMLElement[]; checkbox: HTMLInputElement | null } {
   const content: Node[] = [];
@@ -113,8 +113,7 @@ export function blockFromListItem(id: string, item: HTMLLIElement): HTMLElement[
     equation.textContent = content.map((node) => node.textContent || '').join('');
     return [equation, ...nestedLists.map((list) => list.cloneNode(true) as HTMLElement)];
   }
-  const columnsMatch = /^block:columns:([2-5])$/.exec(id);
-  if (columnsMatch) {
+  if (isColumnBlockId(id)) {
     const columns = createBlock(id);
     const firstColumn = columns.querySelector('.knote-preview-column');
     if (firstColumn) firstColumn.replaceChildren(...cloneContent(), ...nestedLists.map((list) => list.cloneNode(true)));

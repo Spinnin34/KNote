@@ -1,5 +1,5 @@
 import type { Content, ContentText, Style, TDocumentDefinitions } from 'pdfmake/interfaces';
-import { initialHtml, tableDataFromBlock } from '@/components/block-editor/content';
+import { columnOffset, initialHtml, safeFontSize, tableCellHtml, tableColumnWidths, tableDataFromBlock, textAlignment } from '@/components/block-editor/content';
 import { entryTags } from '@/domain/workspace/normalizers';
 import { walkTasks } from '@/domain/workspace/task-tree';
 import type { PageEntry, WorkspacePage } from '@/domain/workspace/types';
@@ -8,13 +8,12 @@ import { getBlockImage } from './block-images';
 const ink = '#24282e';
 const muted = '#586370';
 
-function inline(node: Node): Content {
-  if (!(node instanceof HTMLElement)) return node.textContent || '';
-  if (node.tagName === 'BR') return '\n';
-  if (node.tagName === 'INPUT') return (node as HTMLInputElement).checked ? '[x] ' : '[ ] ';
-  if (node.classList.contains('knote-callout-icon')) return '';
-  const text: ContentText = { text: Array.from(node.childNodes, inline) };
-  const style: Style = {};
+function inline(node: Node, inherited: Style & { link?: string } = {}): ContentText[] {
+  if (!(node instanceof HTMLElement)) return node.textContent ? [{ ...inherited, text: node.textContent }] : [];
+  if (node.tagName === 'BR') return [{ ...inherited, text: '\n' }];
+  if (node.tagName === 'INPUT') return [{ ...inherited, text: (node as HTMLInputElement).checked ? '[x] ' : '[ ] ' }];
+  if (node.classList.contains('knote-callout-icon')) return [];
+  const style = { ...inherited };
   switch (node.tagName) {
     case 'STRONG': case 'B': style.bold = true; break;
     case 'EM': case 'I': style.italics = true; break;
@@ -23,10 +22,29 @@ function inline(node: Node): Content {
     case 'MARK': style.background = node.dataset.knoteColor || '#fff0a6'; break;
     case 'CODE': style.background = '#eff1f3'; break;
     case 'A':
-      if (/^(?:https?:|mailto:)/i.test(node.getAttribute('href') || '')) text.link = (node as HTMLAnchorElement).href;
+      if (/^(?:https?:|mailto:)/i.test(node.getAttribute('href') || '')) style.link = (node as HTMLAnchorElement).href;
       style.color = '#245379'; style.decoration = 'underline';
   }
-  return Object.assign(text, style);
+  Object.assign(style, textStyle(node));
+  return Array.from(node.childNodes).flatMap((child) => inline(child, style));
+}
+
+function textStyle(node: HTMLElement): Style {
+  const fontSize = safeFontSize(node.style.fontSize);
+  const weight = node.style.fontWeight;
+  const fontStyle = node.style.fontStyle;
+  return {
+    ...(fontSize ? { fontSize } : {}),
+    ...(weight ? { bold: weight === 'bold' } : {}),
+    ...(fontStyle ? { italics: fontStyle !== 'normal' } : {}),
+  };
+}
+
+function cellPdfContent(value: string, html?: string): Content {
+  if (!html) return value;
+  const template = document.createElement('template');
+  template.innerHTML = tableCellHtml(value, html);
+  return Array.from(template.content.childNodes).flatMap((child) => inline(child));
 }
 
 async function pdfImage(image: HTMLImageElement, width: number): Promise<Content> {
@@ -58,7 +76,7 @@ async function pdfImage(image: HTMLImageElement, width: number): Promise<Content
   finally { if (objectUrl) URL.revokeObjectURL(objectUrl); }
 }
 
-async function richContent(value: string): Promise<Content[]> {
+export async function richPdfContent(value: string): Promise<Content[]> {
   const template = document.createElement('template');
   template.innerHTML = initialHtml(value);
   const outlines = Array.from(template.content.querySelectorAll('.knote-toc'));
@@ -73,20 +91,28 @@ async function richContent(value: string): Promise<Content[]> {
     for (const child of node.childNodes) {
       if (child instanceof HTMLElement && child.matches('p,div,h1,h2,h3,h4,ul,ol,dl,dt,dd,blockquote,pre,hr,details,summary,figure,img,figcaption')) {
         flush(); result.push(await block(child, width));
-      } else run.push(inline(child));
+      } else run.push(...inline(child));
     }
     flush();
     return result;
   }
   async function block(el: HTMLElement, width: number): Promise<Content> {
     if (el.classList.contains('knote-table-block')) {
-      const { caption, headers, rows } = tableDataFromBlock(el);
+      const { caption, headers, rows, headerless, columnWidths, headerHtml, rowHtml, widthPercent = 100, offsetPercent = 0 } = tableDataFromBlock(el);
+      const tableWidth = width * widthPercent / 100;
+      const offset = width * offsetPercent / 100;
+      const total = columnWidths?.reduce((sum, item) => sum + item, 0) ?? 1;
+      const usable = Math.max(headers.length, tableWidth - 9 * headers.length - 1);
+      const widths = columnWidths
+        ? columnWidths.map((item) => 1 + (usable - headers.length) * item / total)
+        : headers.map(() => '*');
       return { stack: [
-        { text: caption, style: 'caption' },
-        { table: { headerRows: 1, widths: headers.map(() => '*'), body: [
-          headers.map((text) => ({ text, bold: true, fillColor: '#eef1f3' })), ...rows,
-        ] }, layout: 'lightHorizontalLines', fontSize: 9, wordBreak: 'break-all' },
-      ], margin: [0, 5, 0, 10] };
+        ...(caption ? [{ text: caption, style: 'caption' }] : []),
+        { table: { headerRows: headerless ? 0 : 1, widths, body: [
+          ...(headerless ? [] : [headers.map((text, column) => ({ text: cellPdfContent(text, headerHtml?.[column]), bold: true, fillColor: '#eef1f3' }))]),
+          ...rows.map((row, index) => row.map((text, column) => ({ text: cellPdfContent(text, rowHtml?.[index]?.[column]) }))),
+        ] }, fontSize: 9, wordBreak: 'break-all' },
+      ], margin: [offset, 5, Math.max(0, width - offset - tableWidth), 10] };
     }
     if (el.classList.contains('knote-toc')) return {
       toc: { id: outlineIds[outlines.indexOf(el)], title: { text: 'Índice de contenidos', bold: true, margin: [0, 0, 0, 4] } },
@@ -94,13 +120,29 @@ async function richContent(value: string): Promise<Content[]> {
     };
     if (el.classList.contains('knote-preview-columns')) {
       const cells = Array.from(el.children);
-      const columnWidth = (width - 12 * (cells.length - 1)) / Math.max(1, cells.length);
-      const columns = await Promise.all(cells.map(async (column) => ({ width: '*', stack: await children(column, columnWidth) })));
+      const available = Math.max(1, width - 12 * (cells.length - 1));
+      const weights = tableColumnWidths(el.dataset.columnWidths?.split(',').map(Number), cells.length);
+      const total = weights?.reduce((sum, weight) => sum + weight, 0) ?? Math.max(1, cells.length);
+      const columns = await Promise.all(cells.map(async (column, index) => {
+        const columnWidth = available * (weights?.[index] ?? 1) / total;
+        const top = column instanceof HTMLElement ? columnOffset(column.dataset.before) : 0;
+        return { width: columnWidth, stack: await children(column, columnWidth), margin: [0, top, 0, 0] as [number, number, number, number] };
+      }));
       return { columns, columnGap: 12 };
     }
+    if (el.classList.contains('knote-pdf-reference') || (el.tagName === 'DETAILS' &&
+      /^Original de la página \d+$/.test(el.querySelector('summary')?.textContent ?? '') &&
+      el.querySelector('img[alt^="Página "][alt$=" del PDF"]'))) return { text: '' };
     if (el instanceof HTMLImageElement || el.tagName === 'IMG') return pdfImage(el as HTMLImageElement, width);
-    if (el.tagName === 'FIGURE') return { stack: await children(el, width * Number(el.dataset.width || 100) / 100) };
-    if (el.matches('h1,h2,h3,h4')) return { text: inline(el), ...(outlines.length ? { tocItem: outlineIds } : {}), fontSize: [21, 17, 14, 12][Number(el.tagName[1]) - 1], bold: true, margin: [0, 10, 0, 4] };
+    if (el.tagName === 'FIGURE') {
+      const figureWidth = width * Number(el.dataset.width || 100) / 100;
+      const offset = width * Number(el.dataset.offset || 0) / 100;
+      const elements = await children(el, figureWidth);
+      return { stack: elements, margin: [offset, 0, Math.max(0, width - offset - figureWidth), 0] };
+    }
+    const alignment = textAlignment(el.style.textAlign);
+    if (el.matches('h1,h2,h3,h4')) return { text: inline(el), ...(outlines.length ? { tocItem: outlineIds } : {}),
+      fontSize: [21, 17, 14, 12][Number(el.tagName[1]) - 1], bold: true, ...textStyle(el), alignment, margin: [0, 10, 0, 4] };
     if (el.tagName === 'HR') {
       if (el.classList.contains('knote-page-break')) return { text: '', pageBreak: 'after' };
       return { canvas: [{ type: 'line', x1: 0, x2: width, y1: 0, y2: 0, lineWidth: 0.6, lineColor: '#bbc2c9' }], margin: [0, 8, 0, 8] };
@@ -111,8 +153,8 @@ async function richContent(value: string): Promise<Content[]> {
       return { ul: items, type: el.querySelector(':scope > li[data-task]') ? 'none' : 'disc' };
     }
     if (el.tagName === 'PRE') return { text: el.textContent || ' ', fontSize: 9, preserveLeadingSpaces: true, background: '#eff1f3', margin: [8, 5, 0, 7], wordBreak: 'break-all' };
-    if (el.tagName === 'P') return { text: inline(el), margin: [0, 2, 0, 5] };
-    if (el.tagName === 'FIGCAPTION') return { text: el.textContent || '', style: 'caption' };
+    if (el.tagName === 'P') return { text: inline(el), ...textStyle(el), alignment, margin: [0, 2, 0, 5] };
+    if (el.tagName === 'FIGCAPTION') return { text: inline(el), style: 'caption', alignment: 'center' };
     if (el.matches('dt,summary')) return { text: inline(el), bold: true, margin: [0, 5, 0, 2] };
     if (el.matches('blockquote,.knote-callout,dd')) return { stack: await children(el, width - 16), margin: [16, 3, 0, 6], color: muted };
     return { stack: await children(el, width) };
@@ -154,7 +196,7 @@ async function entryContent(entry: PageEntry, page: WorkspacePage, includeChildr
     { text: entry.title || 'Sin título', fontSize: depth ? 12 : 15, bold: true, margin: [Math.min(depth, 4) * 8, 12, 0, 3] },
     { text: metadata.join('   ·   '), style: 'caption' },
     ...(page.fields || []).map((field) => ({ text: field.name + ' · ' + (field.type === 'checkbox' ? (entry.fields?.[field.id] ? 'Sí' : 'No') : String(entry.fields?.[field.id] ?? '—')), style: 'caption' })),
-    ...await richContent(entry.content || ''),
+    ...await richPdfContent(entry.content || ''),
   ];
   if (includeChildren) {
     for (const child of entry.subtasks || []) content.push(...await entryContent(child, page, true, depth + 1));
@@ -177,7 +219,7 @@ export async function downloadPagePdf(page: WorkspacePage, entry?: PageEntry, ch
       content.push(await pdfImage(banner, 495));
     }
     if (page.type === 'code') content.push({ text: page.content, preserveLeadingSpaces: true, fontSize: 9, wordBreak: 'break-all' });
-    else content.push(...await richContent(page.content));
+    else content.push(...await richPdfContent(page.content));
     if (childTitles.length) content.push({ text: 'Páginas', bold: true }, { ul: childTitles });
     const database = page.type === 'database' || page.type === 'board';
     if (database) content.push(...databaseTables(page));

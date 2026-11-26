@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { ArrowLeft, RotateCw } from '@lucide/vue';
 import Button from '@/components/ui/Button.vue';
 import { refreshDocumentOutline } from '@/components/block-editor/outline';
-import { initialHtml } from '@/components/block-editor/content';
+import { initialHtml, tableCellHtml, tableDataFromBlock } from '@/components/block-editor/content';
 
 interface PublicDocument { title: string; content: string; banner: string | null }
 const token = window.location.pathname.split('/').filter(Boolean)[1] ?? '';
@@ -30,34 +30,43 @@ function renderSafeContent(content: string): string {
     image.removeAttribute('data-asset-id');
   });
   template.content.querySelectorAll<HTMLElement>('.knote-table-block').forEach((block) => {
-    let data: { caption?: unknown; headers?: unknown; rows?: unknown };
-    try { data = JSON.parse(block.dataset.knoteTable || '') as typeof data; }
-    catch { block.remove(); return; }
+    const data = tableDataFromBlock(block);
     const table = document.createElement('table');
-    if (typeof data.caption === 'string' && data.caption.trim()) {
-      const caption = document.createElement('caption');
-      caption.textContent = data.caption;
-      table.append(caption);
+    if (data.caption) table.createCaption().textContent = data.caption;
+    else table.setAttribute('aria-label', 'Tabla');
+    if (data.columnWidths) {
+      table.className = 'knote-sized-table';
+      const columns = document.createElement('colgroup');
+      const total = data.columnWidths.reduce((sum, width) => sum + width, 0);
+      data.columnWidths.forEach((width) => {
+        const column = document.createElement('col');
+        column.style.width = `${width / total * 100}%`;
+        columns.append(column);
+      });
+      table.append(columns);
     }
-    const headers = Array.isArray(data.headers) ? data.headers.filter((item): item is string => typeof item === 'string') : [];
-    const rows = Array.isArray(data.rows) ? data.rows as unknown[] : [];
-    if (headers.length) {
-      const thead = document.createElement('thead');
-      const headRow = document.createElement('tr');
-      headers.forEach((value) => { const cell = document.createElement('th'); cell.scope = 'col'; cell.textContent = value; headRow.append(cell); });
-      thead.append(headRow);
-      table.append(thead);
+    if (!data.headerless) {
+      const headRow = table.createTHead().insertRow();
+      data.headers.forEach((value, index) => {
+        const cell = document.createElement('th');
+        cell.scope = 'col';
+        cell.innerHTML = tableCellHtml(value, data.headerHtml?.[index]);
+        headRow.append(cell);
+      });
     }
-    const tbody = document.createElement('tbody');
-    rows.forEach((row) => {
-      if (!Array.isArray(row)) return;
-      const tr = document.createElement('tr');
-      headers.forEach((_, index) => { const cell = document.createElement('td'); cell.textContent = typeof row[index] === 'string' ? row[index] : ''; tr.append(cell); });
-      tbody.append(tr);
+    const tbody = table.createTBody();
+    data.rows.forEach((row, index) => {
+      const tr = tbody.insertRow();
+      row.forEach((value, column) => {
+        tr.insertCell().innerHTML = tableCellHtml(value, data.rowHtml?.[index]?.[column]);
+      });
     });
-    table.append(tbody);
     const scroller = document.createElement('div');
     scroller.className = 'knote-public-table-scroll';
+    if (data.widthPercent) {
+      scroller.style.setProperty('--knote-table-width', `${data.widthPercent}%`);
+      scroller.style.setProperty('--knote-table-offset', `${data.offsetPercent ?? 0}%`);
+    }
     scroller.append(table);
     block.replaceWith(scroller);
   });

@@ -1,4 +1,8 @@
-import { calloutGlyph, EMPTY_TABLE } from '@/components/block-editor/content';
+import { calloutGlyph, columnLayout, EMPTY_TABLE } from '@/components/block-editor/content';
+
+export function isColumnBlockId(id: string): boolean {
+  return /^block:columns:(?:[2-5]|wide-left|wide-right)$/.test(id);
+}
 
 export function blankElement(tag: 'p'): HTMLParagraphElement;
 export function blankElement(tag: string): HTMLElement;
@@ -93,13 +97,12 @@ export function createBlock(id: string): HTMLElement {
     return details;
   }
   if (id === 'block:equation') return Object.assign(blankElement('div'), { className: 'knote-equation' });
-  const columnsMatch = /^block:columns:([2-5])$/.exec(id);
-  if (columnsMatch) {
-    const count = Number(columnsMatch[1]);
-    const columns = document.createElement('div');
-    columns.className = 'knote-preview-columns';
-    columns.dataset.columns = String(count);
-    columns.style.setProperty('--knote-columns', String(count));
+  if (isColumnBlockId(id)) {
+    const count = Number(id.split(':').at(-1)) || 2;
+    const width = id.endsWith('wide-left') ? [2, 1] : id.endsWith('wide-right') ? [1, 2] : undefined;
+    const template = document.createElement('template');
+    template.innerHTML = `<div ${columnLayout(count, width)}></div>`;
+    const columns = template.content.firstElementChild as HTMLElement;
     for (let index = 0; index < count; index += 1) {
       const column = document.createElement('div');
       column.className = 'knote-preview-column';

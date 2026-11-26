@@ -183,7 +183,7 @@ button[id^="entry-icon-"][id$="-trigger"] .knote-icon-trigger { width: 1.8rem; h
 .knote-callout-tools [data-balsa-color-picker-trigger] { width: 1.55rem; height: 1.55rem; min-height: 1.55rem; }
 .knote-callout-tools [data-balsa-color-picker-trigger] > span:not(.sr-only) { display: none; }
 
-.knote-table-block { box-sizing: border-box; width: 100%; max-width: 100%; margin: .9rem 0 1.05rem; }
+.knote-table-block { box-sizing: border-box; width: var(--knote-table-width, 100%); max-width: 100%; margin: .9rem 0 1.05rem var(--knote-table-offset, 0%); }
 .knote-table-component { position: relative; min-width: 0; }
 .knote-table-component-tools {
   display: flex; width: 100%; align-items: center; gap: .35rem; margin-bottom: .35rem;
@@ -196,8 +196,10 @@ button[id^="entry-icon-"][id$="-trigger"] .knote-icon-trigger { width: 1.8rem; h
 .knote-table-block .knote-editable-table td {
   min-width: 7rem; padding: .58rem .72rem; vertical-align: top; overflow-wrap: anywhere;
 }
-.knote-editable-table [contenteditable="plaintext-only"] { white-space: pre-wrap; outline-offset: -2px; cursor: text; }
-.knote-editable-table [contenteditable="plaintext-only"]:focus { outline: 2px solid var(--balsa-role-accent); }
+.knote-editable-table [contenteditable="true"] { white-space: pre-wrap; outline-offset: -2px; cursor: text; }
+.knote-editable-table [contenteditable="true"]:focus { outline: 2px solid var(--balsa-role-accent); }
+.knote-editable-table.knote-sized-table table { table-layout: fixed; }
+.knote-table-block .knote-editable-table.knote-sized-table :is(th, td) { min-width: 0; overflow-wrap: anywhere; }
 
 .knote-block-editor figure.knote-image-block {
   width: min(var(--knote-image-width, 100%), 100%); max-width: 100%; margin: .8rem 0 .8rem var(--knote-image-offset, 0%); padding: 0; border: 0;
@@ -217,8 +219,7 @@ button[id^="entry-icon-"][id$="-trigger"] .knote-icon-trigger { width: 1.8rem; h
 .knote-icon-picker-scroll { max-height: min(20rem, 48vh); margin: 0 -.25rem; padding: 0 .25rem; }
 .knote-icon-picker-grid { grid-template-columns: repeat(8, minmax(0, 1fr)); }
 .knote-icon-picker-grid [data-balsa="button"] { width: 2.1rem; height: 2.1rem; min-height: 2.1rem; }
-.knote-image-tools { width: min(21rem, calc(100% - 2.5rem)); padding: .38rem .55rem; }
-.knote-image-tools-label { flex: 0 0 auto; color: var(--balsa-role-secondary); font-size: .68rem; white-space: nowrap; }
+.knote-image-tools { width: max-content; gap: .25rem; padding: .38rem .5rem; }
 .knote-image-resize-handles { position: absolute; z-index: 40; box-sizing: border-box; border: 1px solid color-mix(in oklab, var(--balsa-role-accent) 68%, transparent); pointer-events: none; }
 .knote-image-resize-handle {
   position: absolute; display: block; width: .72rem; height: .72rem; min-width: .72rem; min-height: .72rem; padding: 0;
@@ -245,6 +246,7 @@ button[id^="entry-icon-"][id$="-trigger"] .knote-icon-trigger { width: 1.8rem; h
 
 @keyframes knote-block-tools-in { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 680px) {
+  .knote-table-block { width: 100%; margin-left: 0; }
   .knote-block-actions [data-balsa="button"] { width: 1.65rem; height: 1.65rem; min-height: 1.65rem; }
   .knote-callout-tools, .knote-image-tools { max-width: calc(100vw - 1rem); }
   .knote-block-editor figure.knote-image-block img { max-height: 52vh; }

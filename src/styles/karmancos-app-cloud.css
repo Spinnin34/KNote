@@ -102,14 +102,16 @@
 .knote-public-content figure img { display: block; width: 100%; height: auto; }
 .knote-public-content figcaption { margin-top: .5rem; color: var(--balsa-role-secondary); font-size: .9rem; }
 .knote-public-content .knote-callout { margin: 1rem 0; padding: .9rem 1rem; border-radius: .8rem; background: color-mix(in oklab, var(--knote-callout-color, var(--balsa-role-accent)) 13%, var(--balsa-role-surface)); }
-.knote-public-content .knote-preview-columns { display: grid; grid-template-columns: repeat(var(--knote-columns, 2), minmax(0, 1fr)); gap: 1.25rem; }
+.knote-public-content .knote-preview-columns { display: grid; grid-template-columns: var(--knote-column-tracks, repeat(var(--knote-columns, 2), minmax(0, 1fr))); gap: 1.25rem; }
 .knote-public-content .knote-preview-column { min-width: 0; }
 .knote-public-content details { margin: 1rem 0; }
 .knote-public-content summary { cursor: pointer; font-weight: 600; }
-.knote-public-table-scroll { margin-block: 1.25rem; overflow-x: auto; }
+.knote-public-table-scroll { width: var(--knote-table-width, 100%); margin-block: 1.25rem; margin-left: var(--knote-table-offset, 0%); overflow-x: auto; }
 .knote-public-content table { width: 100%; border-collapse: collapse; }
 .knote-public-content th,
 .knote-public-content td { min-width: 6rem; padding: .6rem .7rem; border-bottom: 1px solid var(--balsa-role-border); text-align: left; vertical-align: top; white-space: pre-wrap; }
+.knote-public-content .knote-sized-table { table-layout: fixed; }
+.knote-public-content .knote-sized-table :is(th, td) { min-width: 0; overflow-wrap: anywhere; }
 .knote-public-content input[type="checkbox"] { margin-right: .45rem; accent-color: var(--balsa-role-accent); }
 .knote-public-document > footer { margin-top: 4rem; color: var(--balsa-role-secondary); font-size: .85rem; }
 .knote-public-message { display: flex; min-height: 65vh; flex-direction: column; align-items: center; justify-content: center; gap: .85rem; color: var(--balsa-role-secondary); text-align: center; }
@@ -118,6 +120,7 @@
 .knote-public-message--error { color: var(--balsa-role-destructive); }
 
 @media (max-width: 680px) {
+  .knote-public-table-scroll { width: 100%; margin-left: 0; }
   .knote-public-page { padding-inline: 1rem; }
   .knote-public-document { margin-top: 2.5rem; }
   .knote-public-document h1 { margin-bottom: 1.6rem; }
